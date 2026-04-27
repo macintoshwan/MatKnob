@@ -1,0 +1,45 @@
+# Copyright (c) 2026 The ZMK Contributors
+# SPDX-License-Identifier: MIT
+
+menu "Host Command"
+
+DT_CHOSEN_ZMK_HOST_CMD_UART := zmk,host-cmd-uart
+
+menuconfig ZMK_HOST_CMD
+    bool "Host command injection"
+    depends on (!ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL)
+    depends on $(dt_chosen_enabled,$(DT_CHOSEN_ZMK_HOST_CMD_UART))
+    select SERIAL
+    select USB_DEVICE_STACK
+    select USB_CDC_ACM
+    select UART_INTERRUPT_DRIVEN
+    select UART_LINE_CTRL
+    help
+      Enable a text command channel over UART/USB CDC ACM that can inject
+      key press/release events into ZMK.
+
+if ZMK_HOST_CMD
+
+config ZMK_HOST_CMD_LINE_MAX_LEN
+    int "Max command line length"
+    default 64
+    range 16 256
+
+config ZMK_HOST_CMD_QUEUE_DEPTH
+    int "Pending command queue depth"
+    default 8
+    range 1 32
+
+config ZMK_HOST_CMD_CLICK_DELAY_MS
+    int "Mouse click release delay (ms)"
+    default 8
+    range 0 100
+
+config ZMK_HOST_CMD_FAILSAFE_TIMEOUT_MS
+    int "Failsafe timeout without valid commands (ms)"
+    default 500
+    range 50 5000
+
+endif
+
+endmenu
