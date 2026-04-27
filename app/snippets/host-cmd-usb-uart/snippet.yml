@@ -1,0 +1,7 @@
+# Copyright (c) 2026 The ZMK Contributors
+# SPDX-License-Identifier: MIT
+
+name: host-cmd-usb-uart
+append:
+  EXTRA_DTC_OVERLAY_FILE: host-cmd-usb-uart.overlay
+  EXTRA_CONF_FILE: host-cmd-usb-uart.conf
