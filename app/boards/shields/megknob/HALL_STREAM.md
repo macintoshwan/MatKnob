@@ -56,17 +56,17 @@ changing `settle-time-us`.
 
 Each little-endian binary frame is 62 bytes:
 
-| Offset | Size | Field |
-|---:|---:|---|
-| 0 | 2 | magic `MK` |
-| 2 | 1 | protocol version, currently and exclusively `3` |
-| 3 | 1 | type: `1` data, `2` mode change, `3` periodic performance data |
-| 4 | 1 | mode: `0` U26, `1` U27, `2` U28, `3` all |
-| 5 | 1 | sample count: `24` data, `0` mode, `4` performance |
-| 6 | 2 | sequence number |
-| 8 | 4 | v3 `uint32` microsecond timestamp; wraps every about 71.6 minutes |
-| 12 | 48 | data: 24 mV samples; performance: scan/address/ADC/process time in µs |
-| 60 | 2 | CRC-16/CCITT-FALSE over bytes 0-59 |
+| Offset | Size | Field                                                                 |
+| -----: | ---: | --------------------------------------------------------------------- |
+|      0 |    2 | magic `MK`                                                            |
+|      2 |    1 | protocol version, currently and exclusively `3`                       |
+|      3 |    1 | type: `1` data, `2` mode change, `3` periodic performance data        |
+|      4 |    1 | mode: `0` U26, `1` U27, `2` U28, `3` all                              |
+|      5 |    1 | sample count: `24` data, `0` mode, `4` performance                    |
+|      6 |    2 | sequence number                                                       |
+|      8 |    4 | v3 `uint32` microsecond timestamp; wraps every about 71.6 minutes     |
+|     12 |   48 | data: 24 mV samples; performance: scan/address/ADC/process time in µs |
+|     60 |    2 | CRC-16/CCITT-FALSE over bytes 0-59                                    |
 
 If the host is slower than acquisition, firmware discards the oldest queued frame instead of
 delaying ADC scanning.

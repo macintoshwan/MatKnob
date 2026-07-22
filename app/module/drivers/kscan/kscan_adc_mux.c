@@ -457,8 +457,8 @@ static void hall_command_process(struct k_work *work) {
                 break;
             }
         }
-        response.crc = hall_stream_crc16((const uint8_t *)&response,
-                                         offsetof(struct hall_command_frame, crc));
+        response.crc =
+            hall_stream_crc16((const uint8_t *)&response, offsetof(struct hall_command_frame, crc));
         data->last_request_id = command.request_id;
         data->last_response = response;
         data->has_last_response = true;
@@ -484,9 +484,10 @@ static void hall_stream_enqueue(const struct device *dev, uint8_t type) {
         .version = HALL_STREAM_VERSION,
         .type = type,
         .mode = data->stream_mode,
-        .sample_count = type == HALL_STREAM_TYPE_DATA ?
-                            MIN(INST_SAMPLE_COUNT(0), HALL_STREAM_MAX_SAMPLES) :
-                        type == HALL_STREAM_TYPE_PERF ? 4 : 0,
+        .sample_count = type == HALL_STREAM_TYPE_DATA
+                            ? MIN(INST_SAMPLE_COUNT(0), HALL_STREAM_MAX_SAMPLES)
+                        : type == HALL_STREAM_TYPE_PERF ? 4
+                                                        : 0,
         .sequence = data->stream_sequence++,
         .timestamp_us = hall_timestamp_us(data),
     };
@@ -574,7 +575,8 @@ static int kscan_adc_mux_read_channels(const struct device *dev, int32_t *sample
 
     /* Zephyr stores multi-channel samples in ascending ADC channel-id order. */
     for (uint8_t row = 0; row < config->channel_count; row++) {
-        uint32_t lower_channels = data->batch_channel_mask & (BIT(config->channels[row].channel_id) - 1U);
+        uint32_t lower_channels =
+            data->batch_channel_mask & (BIT(config->channels[row].channel_id) - 1U);
         uint8_t sample_index = POPCOUNT(lower_channels);
         samples_mv[row] = data->samples[sample_index];
         err = adc_raw_to_millivolts_dt(&config->channels[row], &samples_mv[row]);
@@ -723,9 +725,10 @@ static int kscan_adc_mux_init(const struct device *dev) {
     data->runtime_press_threshold_mv = config->press_threshold_mv;
     data->runtime_release_threshold_mv = config->release_threshold_mv;
     data->runtime_stable_scan_count = config->stable_scan_count;
-    if (hall_saved_config_valid && hall_config_is_valid(config, hall_saved_config.press_threshold_mv,
-                                                        hall_saved_config.release_threshold_mv,
-                                                        hall_saved_config.stable_scan_count)) {
+    if (hall_saved_config_valid &&
+        hall_config_is_valid(config, hall_saved_config.press_threshold_mv,
+                             hall_saved_config.release_threshold_mv,
+                             hall_saved_config.stable_scan_count)) {
         data->runtime_press_threshold_mv = hall_saved_config.press_threshold_mv;
         data->runtime_release_threshold_mv = hall_saved_config.release_threshold_mv;
         data->runtime_stable_scan_count = hall_saved_config.stable_scan_count;
@@ -739,8 +742,8 @@ static int kscan_adc_mux_init(const struct device *dev) {
 
     if (config->stream_uart != NULL) {
         k_sem_init(&data->tx_queued, 0, 1);
-        int err = uart_irq_callback_user_data_set(config->stream_uart,
-                                                   kscan_adc_mux_uart_callback, data);
+        int err =
+            uart_irq_callback_user_data_set(config->stream_uart, kscan_adc_mux_uart_callback, data);
         if (err) {
             LOG_ERR("Failed to configure ADC stream UART callback: %d", err);
             return err;
@@ -827,87 +830,95 @@ static const struct kscan_driver_api kscan_adc_mux_api = {
     .disable_callback = kscan_adc_mux_disable,
 };
 
-#define KSCAN_ADC_MUX_INIT(n)                                                                         \
-    static const struct gpio_dt_spec kscan_adc_mux_address_gpios_##n[] = {                            \
-        LISTIFY(INST_ADDRESS_GPIOS(n), GPIO_CFG_INIT, (, ), n)};                                      \
-                                                                                                      \
-    static const struct adc_dt_spec kscan_adc_mux_channels_##n[] = {                                  \
-        LISTIFY(INST_ADC_INPUTS(n), ADC_CFG_INIT, (, ), n)};                                         \
-                                                                                                      \
-    static struct adc_sequence kscan_adc_mux_seqs_##n[INST_ADC_INPUTS(n)];                            \
-    static int16_t kscan_adc_mux_samples_##n[INST_ADC_INPUTS(n)];                                     \
-    static uint16_t kscan_adc_mux_voltages_mv_##n[INST_SAMPLE_COUNT(n)];                              \
-    static bool kscan_adc_mux_matrix_state_##n[INST_ADC_INPUTS(n) * INST_COLUMNS(n)];                 \
-    static bool kscan_adc_mux_candidate_state_##n[INST_ADC_INPUTS(n) * INST_COLUMNS(n)];              \
-    static uint8_t kscan_adc_mux_stable_counts_##n[INST_ADC_INPUTS(n) * INST_COLUMNS(n)];             \
-    static struct k_work_q kscan_adc_mux_work_queue_##n;                                             \
-    K_THREAD_STACK_DEFINE(kscan_adc_mux_work_queue_stack_##n, 1024);                                 \
-    K_MSGQ_DEFINE(kscan_adc_mux_stream_queue_##n, sizeof(struct hall_stream_frame), 4, 4);             \
-    K_MSGQ_DEFINE(kscan_adc_mux_command_queue_##n, sizeof(struct hall_command_frame), 4, 4);           \
-    K_MSGQ_DEFINE(kscan_adc_mux_response_queue_##n, sizeof(struct hall_command_frame), 4, 4);          \
-    static void kscan_adc_mux_stream_thread_##n(void *, void *, void *);                               \
-    K_THREAD_DEFINE(kscan_adc_mux_stream_tid_##n, 1024, kscan_adc_mux_stream_thread_##n, NULL, NULL,  \
-                    NULL, K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);                                    \
-                                                                                                      \
-    static struct kscan_adc_mux_data kscan_adc_mux_data_##n = {                                       \
-        .seqs = kscan_adc_mux_seqs_##n,                                                              \
-        .samples = kscan_adc_mux_samples_##n,                                                        \
-        .voltages_mv = kscan_adc_mux_voltages_mv_##n,                                                \
-        .matrix_state = kscan_adc_mux_matrix_state_##n,                                              \
-        .candidate_state = kscan_adc_mux_candidate_state_##n,                                        \
-        .stable_counts = kscan_adc_mux_stable_counts_##n,                                            \
-        .work_queue = &kscan_adc_mux_work_queue_##n,                                                 \
-        .work_queue_stack = kscan_adc_mux_work_queue_stack_##n,                                      \
-        .work_queue_stack_size = K_THREAD_STACK_SIZEOF(kscan_adc_mux_work_queue_stack_##n),           \
-        .stream_queue = &kscan_adc_mux_stream_queue_##n,                                             \
-        .command_queue = &kscan_adc_mux_command_queue_##n,                                           \
-        .response_queue = &kscan_adc_mux_response_queue_##n,                                         \
-    };                                                                                                \
-                                                                                                      \
-    static const struct kscan_adc_mux_config kscan_adc_mux_config_##n = {                             \
-        .address_gpios = kscan_adc_mux_address_gpios_##n,                                            \
-        .channels = kscan_adc_mux_channels_##n,                                                       \
-        .address_gpio_count = INST_ADDRESS_GPIOS(n),                                                  \
-        .channel_count = INST_ADC_INPUTS(n),                                                         \
-        .column_count = INST_COLUMNS(n),                                                             \
-        .polling_interval_ms = DT_INST_PROP(n, polling_interval_ms),                                  \
-        .settle_time_us = DT_INST_PROP(n, settle_time_us),                                           \
-        .dummy_read = DT_INST_PROP(n, dummy_read),                                                   \
-        .press_threshold_mv = DT_INST_PROP(n, press_threshold_mv),                                    \
-        .release_threshold_mv = DT_INST_PROP(n, release_threshold_mv),                                \
-        .stable_scan_count = DT_INST_PROP(n, stable_scan_count),                                      \
-        .press_is_greater = DT_INST_PROP(n, press_is_greater),                                       \
-        .stream_uart = COND_CODE_1(DT_INST_NODE_HAS_PROP(n, stream_uart),                             \
-                                   (DEVICE_DT_GET(DT_INST_PHANDLE(n, stream_uart))), (NULL)),         \
-        .mode_switch_position = DT_INST_PROP_OR(n, mode_switch_position, 0),                          \
-        .has_mode_switch = DT_INST_NODE_HAS_PROP(n, mode_switch_position),                            \
-    };                                                                                                \
-                                                                                                      \
-    static void kscan_adc_mux_stream_thread_##n(void *a, void *b, void *c) {                          \
-        ARG_UNUSED(a); ARG_UNUSED(b); ARG_UNUSED(c);                                                  \
-        struct hall_stream_frame frame;                                                              \
-        struct hall_command_frame response;                                                          \
-        const struct device *uart = kscan_adc_mux_config_##n.stream_uart;                             \
-        struct kscan_adc_mux_data *data = &kscan_adc_mux_data_##n;                                   \
-        while (true) {                                                                                \
-            bool is_response = k_msgq_get(&kscan_adc_mux_response_queue_##n, &response, K_NO_WAIT) == 0; \
-            if (!is_response && k_msgq_get(&kscan_adc_mux_stream_queue_##n, &frame, K_MSEC(10)) != 0) { \
-                continue;                                                                             \
-            }                                                                                         \
-            if (uart == NULL) { continue; }                                                          \
-            uint32_t dtr = 0;                                                                         \
-            if (uart_line_ctrl_get(uart, UART_LINE_CTRL_DTR, &dtr) == 0 && dtr == 0) { continue; }   \
-            data->tx_length = is_response ? sizeof(response) : sizeof(frame);                         \
-            memcpy(data->tx_bytes, is_response ? (const void *)&response : (const void *)&frame,      \
-                   data->tx_length);                                                                  \
-            data->tx_offset = 0;                                                                     \
-            uart_irq_tx_enable(uart);                                                                \
-            k_sem_take(&data->tx_queued, K_FOREVER);                                                 \
-        }                                                                                             \
-    }                                                                                                 \
-                                                                                                      \
-    DEVICE_DT_INST_DEFINE(n, &kscan_adc_mux_init, NULL, &kscan_adc_mux_data_##n,                      \
-                          &kscan_adc_mux_config_##n, POST_KERNEL, CONFIG_KSCAN_INIT_PRIORITY,         \
+#define KSCAN_ADC_MUX_INIT(n)                                                                      \
+    static const struct gpio_dt_spec kscan_adc_mux_address_gpios_##n[] = {                         \
+        LISTIFY(INST_ADDRESS_GPIOS(n), GPIO_CFG_INIT, (, ), n)};                                   \
+                                                                                                   \
+    static const struct adc_dt_spec kscan_adc_mux_channels_##n[] = {                               \
+        LISTIFY(INST_ADC_INPUTS(n), ADC_CFG_INIT, (, ), n)};                                       \
+                                                                                                   \
+    static struct adc_sequence kscan_adc_mux_seqs_##n[INST_ADC_INPUTS(n)];                         \
+    static int16_t kscan_adc_mux_samples_##n[INST_ADC_INPUTS(n)];                                  \
+    static uint16_t kscan_adc_mux_voltages_mv_##n[INST_SAMPLE_COUNT(n)];                           \
+    static bool kscan_adc_mux_matrix_state_##n[INST_ADC_INPUTS(n) * INST_COLUMNS(n)];              \
+    static bool kscan_adc_mux_candidate_state_##n[INST_ADC_INPUTS(n) * INST_COLUMNS(n)];           \
+    static uint8_t kscan_adc_mux_stable_counts_##n[INST_ADC_INPUTS(n) * INST_COLUMNS(n)];          \
+    static struct k_work_q kscan_adc_mux_work_queue_##n;                                           \
+    K_THREAD_STACK_DEFINE(kscan_adc_mux_work_queue_stack_##n, 1024);                               \
+    K_MSGQ_DEFINE(kscan_adc_mux_stream_queue_##n, sizeof(struct hall_stream_frame), 4, 4);         \
+    K_MSGQ_DEFINE(kscan_adc_mux_command_queue_##n, sizeof(struct hall_command_frame), 4, 4);       \
+    K_MSGQ_DEFINE(kscan_adc_mux_response_queue_##n, sizeof(struct hall_command_frame), 4, 4);      \
+    static void kscan_adc_mux_stream_thread_##n(void *, void *, void *);                           \
+    K_THREAD_DEFINE(kscan_adc_mux_stream_tid_##n, 1024, kscan_adc_mux_stream_thread_##n, NULL,     \
+                    NULL, NULL, K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);                           \
+                                                                                                   \
+    static struct kscan_adc_mux_data kscan_adc_mux_data_##n = {                                    \
+        .seqs = kscan_adc_mux_seqs_##n,                                                            \
+        .samples = kscan_adc_mux_samples_##n,                                                      \
+        .voltages_mv = kscan_adc_mux_voltages_mv_##n,                                              \
+        .matrix_state = kscan_adc_mux_matrix_state_##n,                                            \
+        .candidate_state = kscan_adc_mux_candidate_state_##n,                                      \
+        .stable_counts = kscan_adc_mux_stable_counts_##n,                                          \
+        .work_queue = &kscan_adc_mux_work_queue_##n,                                               \
+        .work_queue_stack = kscan_adc_mux_work_queue_stack_##n,                                    \
+        .work_queue_stack_size = K_THREAD_STACK_SIZEOF(kscan_adc_mux_work_queue_stack_##n),        \
+        .stream_queue = &kscan_adc_mux_stream_queue_##n,                                           \
+        .command_queue = &kscan_adc_mux_command_queue_##n,                                         \
+        .response_queue = &kscan_adc_mux_response_queue_##n,                                       \
+    };                                                                                             \
+                                                                                                   \
+    static const struct kscan_adc_mux_config kscan_adc_mux_config_##n = {                          \
+        .address_gpios = kscan_adc_mux_address_gpios_##n,                                          \
+        .channels = kscan_adc_mux_channels_##n,                                                    \
+        .address_gpio_count = INST_ADDRESS_GPIOS(n),                                               \
+        .channel_count = INST_ADC_INPUTS(n),                                                       \
+        .column_count = INST_COLUMNS(n),                                                           \
+        .polling_interval_ms = DT_INST_PROP(n, polling_interval_ms),                               \
+        .settle_time_us = DT_INST_PROP(n, settle_time_us),                                         \
+        .dummy_read = DT_INST_PROP(n, dummy_read),                                                 \
+        .press_threshold_mv = DT_INST_PROP(n, press_threshold_mv),                                 \
+        .release_threshold_mv = DT_INST_PROP(n, release_threshold_mv),                             \
+        .stable_scan_count = DT_INST_PROP(n, stable_scan_count),                                   \
+        .press_is_greater = DT_INST_PROP(n, press_is_greater),                                     \
+        .stream_uart = COND_CODE_1(DT_INST_NODE_HAS_PROP(n, stream_uart),                          \
+                                   (DEVICE_DT_GET(DT_INST_PHANDLE(n, stream_uart))), (NULL)),      \
+        .mode_switch_position = DT_INST_PROP_OR(n, mode_switch_position, 0),                       \
+        .has_mode_switch = DT_INST_NODE_HAS_PROP(n, mode_switch_position),                         \
+    };                                                                                             \
+                                                                                                   \
+    static void kscan_adc_mux_stream_thread_##n(void *a, void *b, void *c) {                       \
+        ARG_UNUSED(a);                                                                             \
+        ARG_UNUSED(b);                                                                             \
+        ARG_UNUSED(c);                                                                             \
+        struct hall_stream_frame frame;                                                            \
+        struct hall_command_frame response;                                                        \
+        const struct device *uart = kscan_adc_mux_config_##n.stream_uart;                          \
+        struct kscan_adc_mux_data *data = &kscan_adc_mux_data_##n;                                 \
+        while (true) {                                                                             \
+            bool is_response =                                                                     \
+                k_msgq_get(&kscan_adc_mux_response_queue_##n, &response, K_NO_WAIT) == 0;          \
+            if (!is_response &&                                                                    \
+                k_msgq_get(&kscan_adc_mux_stream_queue_##n, &frame, K_MSEC(10)) != 0) {            \
+                continue;                                                                          \
+            }                                                                                      \
+            if (uart == NULL) {                                                                    \
+                continue;                                                                          \
+            }                                                                                      \
+            uint32_t dtr = 0;                                                                      \
+            if (uart_line_ctrl_get(uart, UART_LINE_CTRL_DTR, &dtr) == 0 && dtr == 0) {             \
+                continue;                                                                          \
+            }                                                                                      \
+            data->tx_length = is_response ? sizeof(response) : sizeof(frame);                      \
+            memcpy(data->tx_bytes, is_response ? (const void *)&response : (const void *)&frame,   \
+                   data->tx_length);                                                               \
+            data->tx_offset = 0;                                                                   \
+            uart_irq_tx_enable(uart);                                                              \
+            k_sem_take(&data->tx_queued, K_FOREVER);                                               \
+        }                                                                                          \
+    }                                                                                              \
+                                                                                                   \
+    DEVICE_DT_INST_DEFINE(n, &kscan_adc_mux_init, NULL, &kscan_adc_mux_data_##n,                   \
+                          &kscan_adc_mux_config_##n, POST_KERNEL, CONFIG_KSCAN_INIT_PRIORITY,      \
                           &kscan_adc_mux_api);
 
 DT_INST_FOREACH_STATUS_OKAY(KSCAN_ADC_MUX_INIT)
