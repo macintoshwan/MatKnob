@@ -1,0 +1,8 @@
+file_format: "1"
+id: megknob
+name: MegKnob
+type: shield
+url: https://zmk.dev/docs/hardware-integration/adding-shields
+requires: [pro_micro]
+features:
+  - keys

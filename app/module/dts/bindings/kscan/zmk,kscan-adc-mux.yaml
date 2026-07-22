@@ -1,0 +1,56 @@
+# Copyright (c) 2026 The ZMK Contributors
+# SPDX-License-Identifier: MIT
+
+description: ADC keyboard mux controller
+
+compatible: "zmk,kscan-adc-mux"
+
+include: kscan.yaml
+
+properties:
+  address-gpios:
+    type: phandle-array
+    required: true
+    description: 4051 address pins, ordered from least significant bit to most significant bit.
+
+  io-channels:
+    type: phandle-array
+    required: true
+    description: ADC inputs connected to the mux common pins.
+
+  polling-interval-ms:
+    type: int
+    default: 5
+
+  settle-time-us:
+    type: int
+    default: 20
+
+  dummy-read:
+    type: boolean
+    description: Perform and discard one ADC conversion before retaining each channel sample.
+
+  press-threshold-mv:
+    type: int
+    required: true
+
+  release-threshold-mv:
+    type: int
+    required: true
+
+  press-is-greater:
+    type: boolean
+    description: Treat voltages greater than the press threshold as pressed.
+
+  stable-scan-count:
+    type: int
+    default: 3
+    description: Number of consecutive scans required before reporting a state change.
+
+  stream-uart:
+    type: phandle
+    description: Optional UART or USB CDC ACM device used to stream all ADC channel voltages.
+
+  mode-switch-position:
+    type: int
+    description: Optional transformed ZMK key position which cycles the host display mode.
