@@ -25,3 +25,8 @@ __pycache__
 # clangd
 app/.cache/
 /app/build-*/
+
+# Manim render cache and local environment
+/anima/.venv/
+/anima/media/
+/anima/__pycache__/
