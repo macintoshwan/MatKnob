@@ -438,17 +438,21 @@ jobs:
           escape_json: false
       - uses: actions/github-script@v9
         id: board-changes
+        env:
+          CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
         with:
           script: |
-            const changedFiles = JSON.parse(`${{ steps.changed-files.outputs.all_changed_files }}`);
+            const changedFiles = JSON.parse(process.env.CHANGED_FILES);
             const boardChanges = changedFiles.filter(f => f.startsWith('app/boards'));
             return boardChanges.length ? 'true' : 'false';
           result-encoding: string
       - uses: actions/github-script@v9
         id: core-changes
+        env:
+          CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
         with:
           script: |
-            const changedFiles = JSON.parse(`${{ steps.changed-files.outputs.all_changed_files }}`);
+            const changedFiles = JSON.parse(process.env.CHANGED_FILES);
             const boardChanges = changedFiles.filter(f => f.startsWith('app/boards'));
             const appChanges = changedFiles.filter(f => f.startsWith('app'));
             const ymlChanges = changedFiles.includes('.github/workflows/build.yml');
