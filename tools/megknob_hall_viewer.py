@@ -18,6 +18,19 @@ from serial.tools import list_ports
 
 MAGIC = b"MK"
 FRAME = struct.Struct("<2sBBBBHI24HH")
+COMMAND_MAGIC = b"MC"
+RESPONSE_MAGIC = b"MR"
+COMMAND_FRAME = struct.Struct("<2sBBBBH8sH")
+COMMAND_GET_CONFIG = 1
+COMMAND_SET_CONFIG = 2
+COMMAND_SAVE_CONFIG = 3
+COMMAND_RESET_CONFIG = 4
+COMMAND_SET_STREAM = 5
+COMMAND_PING = 6
+COMMAND_STATUS = {
+    0: "OK", 1: "协议版本不支持", 2: "命令长度错误", 3: "未知命令",
+    4: "参数超出范围", 5: "Flash 存储失败",
+}
 MODE_NAMES = ("U26 · ADC3", "U27 · ADC2", "U28 · ADC1", "ALL · 24 CH")
 CHANNEL_COLORS = (
     "#ffd000", "#00d8ff", "#ff4dcb", "#57e389", "#ff7b45", "#9d7cff", "#f5f5f5", "#72ffda",
@@ -97,14 +110,27 @@ class Metrics:
         }
 
 
-def decode_frames(buffer: bytearray, metrics: Metrics):
+def decode_frames(buffer: bytearray, metrics: Metrics, responses: list | None = None):
     decoded = []
     while True:
-        start = buffer.find(MAGIC)
-        if start < 0:
+        stream_at = buffer.find(MAGIC)
+        response_at = buffer.find(RESPONSE_MAGIC) if responses is not None else -1
+        starts = [offset for offset in (stream_at, response_at) if offset >= 0]
+        if not starts:
             del buffer[:-1]
             break
+        start = min(starts)
         if start: del buffer[:start]
+        if response_at == start and (stream_at < 0 or response_at < stream_at):
+            if len(buffer) < COMMAND_FRAME.size: break
+            raw = bytes(buffer[:COMMAND_FRAME.size])
+            try:
+                response = decode_response(raw)
+            except ValueError:
+                metrics.add_crc_error(); del buffer[0]; continue
+            del buffer[:COMMAND_FRAME.size]
+            responses.append(response)
+            continue
         if len(buffer) < FRAME.size: break
         raw = bytes(buffer[:FRAME.size])
         if crc16(raw[:-2]) != int.from_bytes(raw[-2:], "little"):
@@ -119,6 +145,23 @@ def decode_frames(buffer: bytearray, metrics: Metrics):
         decoded.append((kind, mode, seq, timestamp_ms,
                         values if kind == 1 and count == 24 else None))
     return decoded
+
+
+def encode_command(command: int, request_id: int, payload: bytes = b"") -> bytes:
+    if len(payload) > 8:
+        raise ValueError("command payload is limited to 8 bytes")
+    padded = payload.ljust(8, b"\0")
+    raw = COMMAND_FRAME.pack(COMMAND_MAGIC, 1, command, len(payload), 0, request_id, padded, 0)
+    return raw[:-2] + struct.pack("<H", crc16(raw[:-2]))
+
+
+def decode_response(raw: bytes) -> dict[str, int | bytes]:
+    if len(raw) != COMMAND_FRAME.size:
+        raise ValueError("invalid response length")
+    magic, version, command, length, status, request_id, payload, received_crc = COMMAND_FRAME.unpack(raw)
+    if magic != RESPONSE_MAGIC or version != 1 or length > 8 or crc16(raw[:-2]) != received_crc:
+        raise ValueError("invalid response frame")
+    return {"command": command, "status": status, "request_id": request_id, "payload": payload[:length]}
 
 
 def capture_baseline(port: str, seconds: float) -> dict[str, float | int]:
@@ -146,10 +189,13 @@ def run_gui() -> None:
 
     class SerialReader(QtCore.QThread):
         metrics_changed = QtCore.pyqtSignal(object)
+        response_received = QtCore.pyqtSignal(object)
         failed = QtCore.pyqtSignal(str)
 
         def __init__(self, port: str):
             super().__init__(); self.port = port; self.keep_running = True; self.metrics = Metrics()
+            self.device = None; self.request_id = 0
+            self.outgoing = deque(); self.outgoing_lock = threading.Lock()
             # Bound latency: old acquisition frames are less valuable than the live signal.
             self.pending = deque(maxlen=64)
             self.pending_lock = threading.Lock()
@@ -159,10 +205,18 @@ def run_gui() -> None:
             buffer = bytearray(); last_metrics = 0.0
             try:
                 with serial.Serial(self.port, 115200, timeout=0.02) as device:
-                    device.dtr = True
+                    self.device = device; device.dtr = True
                     while self.keep_running:
+                        with self.outgoing_lock:
+                            outgoing = list(self.outgoing); self.outgoing.clear()
+                        for frame in outgoing:
+                            device.write(frame)
+                        if outgoing: device.flush()
                         chunk = device.read(512); self.metrics.add_bytes(len(chunk)); buffer.extend(chunk)
-                        decoded = decode_frames(buffer, self.metrics)
+                        responses = []
+                        decoded = decode_frames(buffer, self.metrics, responses)
+                        for response in responses:
+                            self.response_received.emit(response)
                         if decoded:
                             arrival_ms = time.perf_counter() * 1000.0
                             stamped = [(*frame, arrival_ms) for frame in decoded]
@@ -174,6 +228,17 @@ def run_gui() -> None:
                             self.metrics_changed.emit(self.metrics.snapshot()); last_metrics = now
             except serial.SerialException as exc:
                 self.failed.emit(str(exc))
+            finally:
+                self.device = None
+
+        def send_command(self, command, payload=b""):
+            if self.device is None or not self.keep_running:
+                return False
+            self.request_id = (self.request_id + 1) & 0xFFFF or 1
+            frame = encode_command(command, self.request_id, payload)
+            with self.outgoing_lock:
+                self.outgoing.append(frame)
+            return True
 
         def stop(self):
             self.keep_running = False; self.wait(1000)
@@ -213,6 +278,7 @@ def run_gui() -> None:
             self.setWindowTitle("MEGKNOB · HALL ANALYZER")
             self.resize(1500, 900)
             self.reader = None; self.running = True; self.mode = 0
+            self.device_info = {}; self.device_config = None
             self.window_seconds = 2.0; self.history = deque(); self.latest = [0] * 24
             self.curves = []; self.channel_checks = []; self.value_labels = []
             self.csv_file = self.csv_writer = None
@@ -311,6 +377,25 @@ def run_gui() -> None:
             self.analysis_values = QtWidgets.QLabel("CURRENT   —\nMINIMUM   —\nMAXIMUM   —\nMEAN      —\nPEAK-PEAK —")
             self.analysis_values.setStyleSheet("font-family:'Consolas';font-size:11pt;line-height:150%;color:#d9dde3;padding:8px")
             analysis_layout.addWidget(self.analysis_values)
+            config_group = QtWidgets.QGroupBox("DEVICE CONFIG")
+            config_layout = QtWidgets.QFormLayout(config_group)
+            self.press_spin = QtWidgets.QSpinBox(); self.press_spin.setRange(50, 3000); self.press_spin.setSuffix(" mV"); self.press_spin.setValue(900)
+            self.release_spin = QtWidgets.QSpinBox(); self.release_spin.setRange(50, 3300); self.release_spin.setSuffix(" mV"); self.release_spin.setValue(1400)
+            self.stable_spin = QtWidgets.QSpinBox(); self.stable_spin.setRange(1, 20); self.stable_spin.setValue(3)
+            config_layout.addRow("Press", self.press_spin); config_layout.addRow("Release", self.release_spin); config_layout.addRow("Stable scans", self.stable_spin)
+            config_buttons = QtWidgets.QGridLayout()
+            read_config = QtWidgets.QPushButton("读取"); read_config.clicked.connect(self.read_device_config)
+            apply_config = QtWidgets.QPushButton("临时应用"); apply_config.clicked.connect(self.apply_device_config)
+            save_config = QtWidgets.QPushButton("保存 Flash"); save_config.clicked.connect(self.save_device_config)
+            reset_config = QtWidgets.QPushButton("恢复默认"); reset_config.clicked.connect(self.reset_device_config)
+            config_buttons.addWidget(read_config, 0, 0); config_buttons.addWidget(apply_config, 0, 1)
+            config_buttons.addWidget(save_config, 1, 0); config_buttons.addWidget(reset_config, 1, 1)
+            config_layout.addRow(config_buttons)
+            self.stream_check = QtWidgets.QCheckBox("实时遥测"); self.stream_check.setChecked(True); self.stream_check.toggled.connect(self.set_stream_enabled)
+            config_layout.addRow(self.stream_check)
+            self.device_label = QtWidgets.QLabel("未读取设备信息"); self.device_label.setWordWrap(True); self.device_label.setStyleSheet("color:#858e9b")
+            config_layout.addRow(self.device_label)
+            analysis_layout.addWidget(config_group)
             analysis_layout.addStretch()
             hint = QtWidgets.QLabel("鼠标滚轮缩放\n拖动波形平移\n双击恢复视图")
             hint.setStyleSheet("color:#858e9b;padding:8px"); analysis_layout.addWidget(hint)
@@ -339,8 +424,12 @@ def run_gui() -> None:
             port = self.port_box.currentData()
             if not port: self.connection_status.setText(" NO SERIAL PORT "); return
             self.reader = SerialReader(port)
-            self.reader.metrics_changed.connect(self.on_metrics); self.reader.failed.connect(self.on_failure); self.reader.start()
+            self.reader.metrics_changed.connect(self.on_metrics)
+            self.reader.response_received.connect(self.on_response)
+            self.reader.failed.connect(self.on_failure); self.reader.start()
             self.display_lag_ms = 0.0
+            QtCore.QTimer.singleShot(250, lambda: self.send_device_command(COMMAND_PING))
+            QtCore.QTimer.singleShot(400, self.read_device_config)
             self.connect_btn.setText("断开"); self.connection_status.setText(f" ● CONNECTED  {port} "); self.connection_status.setStyleSheet("color:#57e389")
 
         def disconnect(self):
@@ -349,6 +438,50 @@ def run_gui() -> None:
 
         def on_failure(self, message):
             self.disconnect(); self.connection_status.setText(" SERIAL ERROR: " + message)
+
+        def send_device_command(self, command, payload=b""):
+            if self.reader is None or not self.reader.send_command(command, payload):
+                self.connection_status.setText(" DEVICE COMMAND NOT SENT ")
+                return False
+            return True
+
+        def read_device_config(self):
+            self.send_device_command(COMMAND_GET_CONFIG)
+
+        def apply_device_config(self):
+            press = self.press_spin.value(); release = self.release_spin.value()
+            if press >= release:
+                self.connection_status.setText(" PRESS MUST BE LOWER THAN RELEASE "); return
+            self.send_device_command(COMMAND_SET_CONFIG, struct.pack("<HHB", press, release, self.stable_spin.value()))
+
+        def save_device_config(self):
+            self.send_device_command(COMMAND_SAVE_CONFIG)
+
+        def reset_device_config(self):
+            self.send_device_command(COMMAND_RESET_CONFIG)
+
+        def set_stream_enabled(self, enabled):
+            if self.reader is not None:
+                self.send_device_command(COMMAND_SET_STREAM, bytes((int(enabled),)))
+
+        def on_response(self, response):
+            status = response["status"]
+            if status != 0:
+                self.connection_status.setText(" DEVICE ERROR: " + COMMAND_STATUS.get(status, str(status)))
+                return
+            payload = response["payload"]; command = response["command"]
+            if command == COMMAND_PING and len(payload) >= 4:
+                self.device_info = {"stream": payload[0], "schema": payload[1], "channels": payload[2], "command": payload[3]}
+                self.device_label.setText(
+                    f"Stream v{payload[0]} · Config v{payload[1]}\n{payload[2]} channels · Command v{payload[3]}")
+            elif command in (COMMAND_GET_CONFIG, COMMAND_SET_CONFIG, COMMAND_SAVE_CONFIG,
+                             COMMAND_RESET_CONFIG, COMMAND_SET_STREAM) and len(payload) >= 6:
+                press, release, stable, enabled = struct.unpack("<HHBB", payload[:6])
+                self.device_config = (press, release, stable, bool(enabled))
+                for widget, value in ((self.press_spin, press), (self.release_spin, release), (self.stable_spin, stable)):
+                    widget.blockSignals(True); widget.setValue(value); widget.blockSignals(False)
+                self.stream_check.blockSignals(True); self.stream_check.setChecked(bool(enabled)); self.stream_check.blockSignals(False)
+                self.connection_status.setText(" DEVICE CONFIG OK ")
 
         def on_packet(self, kind, mode, timestamp, values, arrival_ms):
             if mode != self.mode:

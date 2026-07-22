@@ -7,15 +7,23 @@
 #include <dt-bindings/zmk/rgb.h>
 
 / {
+    sensors: sensors {
+        compatible = "zmk,keymap-sensors";
+        sensors = <&encoder>;
+        triggers-per-rotation = <20>;
+    };
+
     keymap {
         compatible = "zmk,keymap";
         default_layer {
+            display-name = "HID Test";
+            sensor-bindings = <&inc_dec_kp C_VOLUME_UP C_VOLUME_DOWN>;
             bindings = <
-                &none &none &none &none &none
+                &kp TAB &none &none &none &none
                 &none &none &none &none &none
                 &none &none &none &none
                 &none &none &none &none &none
-                &none &none &none
+                &kp C_MUTE
             >;
         };
     };

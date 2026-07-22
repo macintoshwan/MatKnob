@@ -13,6 +13,8 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/settings/settings.h>
+#include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/timing/timing.h>
 
@@ -31,6 +33,34 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define HALL_STREAM_TYPE_PERF 3
 #define HALL_STREAM_MODE_COUNT 4
 #define HALL_STREAM_MAX_SAMPLES 24
+
+#define HALL_COMMAND_MAGIC_0 'M'
+#define HALL_COMMAND_MAGIC_1 'C'
+#define HALL_RESPONSE_MAGIC_1 'R'
+#define HALL_COMMAND_VERSION 1
+#define HALL_COMMAND_PAYLOAD_SIZE 8
+#define HALL_CONFIG_SCHEMA_VERSION 1
+
+#define HALL_COMMAND_GET_CONFIG 1
+#define HALL_COMMAND_SET_CONFIG 2
+#define HALL_COMMAND_SAVE_CONFIG 3
+#define HALL_COMMAND_RESET_CONFIG 4
+#define HALL_COMMAND_SET_STREAM 5
+#define HALL_COMMAND_PING 6
+
+#define HALL_STATUS_OK 0
+#define HALL_STATUS_BAD_VERSION 1
+#define HALL_STATUS_BAD_LENGTH 2
+#define HALL_STATUS_BAD_COMMAND 3
+#define HALL_STATUS_BAD_VALUE 4
+#define HALL_STATUS_STORAGE_ERROR 5
+
+#define HALL_PRESS_MIN_MV 50
+#define HALL_PRESS_MAX_MV 3000
+#define HALL_RELEASE_MIN_MV 50
+#define HALL_RELEASE_MAX_MV 3300
+#define HALL_STABLE_SCAN_MIN 1
+#define HALL_STABLE_SCAN_MAX 20
 
 #define GPIO_CFG_INIT(idx, inst) GPIO_DT_SPEC_INST_GET_BY_IDX(inst, address_gpios, idx)
 #define ADC_CFG_INIT(idx, inst) ADC_DT_SPEC_INST_GET_BY_IDX(inst, idx)
@@ -65,6 +95,54 @@ struct __packed hall_stream_frame {
     uint16_t crc;
 };
 
+struct __packed hall_command_frame {
+    uint8_t magic[2];
+    uint8_t version;
+    uint8_t command;
+    uint8_t payload_length;
+    uint8_t status;
+    uint16_t request_id;
+    uint8_t payload[HALL_COMMAND_PAYLOAD_SIZE];
+    uint16_t crc;
+};
+
+struct __packed hall_persisted_config {
+    uint8_t schema_version;
+    uint8_t stable_scan_count;
+    uint16_t press_threshold_mv;
+    uint16_t release_threshold_mv;
+};
+
+struct kscan_adc_mux_data;
+
+static struct hall_persisted_config hall_saved_config;
+static bool hall_saved_config_valid;
+static struct kscan_adc_mux_data *hall_active_data;
+static const struct kscan_adc_mux_config *hall_active_config;
+static int hall_settings_commit(void);
+
+static int hall_settings_set(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
+    const char *next;
+
+    if (!settings_name_steq(name, "config", &next) || next != NULL) {
+        return -ENOENT;
+    }
+    if (len != sizeof(hall_saved_config)) {
+        return -EINVAL;
+    }
+
+    int rc = read_cb(cb_arg, &hall_saved_config, sizeof(hall_saved_config));
+    if (rc < 0) {
+        return rc;
+    }
+    hall_saved_config_valid = rc == sizeof(hall_saved_config) &&
+                              hall_saved_config.schema_version == HALL_CONFIG_SCHEMA_VERSION;
+    return 0;
+}
+
+SETTINGS_STATIC_HANDLER_DEFINE(megknob_hall, "megknob/hall", NULL, hall_settings_set,
+                               hall_settings_commit, NULL);
+
 struct kscan_adc_mux_data {
     const struct device *dev;
     kscan_callback_t callback;
@@ -81,6 +159,11 @@ struct kscan_adc_mux_data {
     bool *candidate_state;
     uint8_t *stable_counts;
     uint8_t stream_mode;
+    bool stream_enabled;
+    uint16_t runtime_press_threshold_mv;
+    uint16_t runtime_release_threshold_mv;
+    uint8_t runtime_stable_scan_count;
+    struct k_mutex config_mutex;
     uint16_t stream_sequence;
     uint16_t perf_scan_count;
     uint16_t perf_scan_us;
@@ -93,22 +176,98 @@ struct kscan_adc_mux_data {
     bool address_valid;
     atomic_t scanning;
     struct k_msgq *stream_queue;
-    struct hall_stream_frame tx_frame;
+    struct k_msgq *command_queue;
+    struct k_msgq *response_queue;
+    uint8_t tx_bytes[sizeof(struct hall_stream_frame)];
+    size_t tx_length;
     size_t tx_offset;
     struct k_sem tx_queued;
+    struct k_work command_work;
+    uint8_t rx_bytes[sizeof(struct hall_command_frame)];
+    uint8_t rx_offset;
+    uint16_t last_request_id;
+    bool has_last_response;
+    struct hall_command_frame last_response;
 };
+
+static bool hall_config_is_valid(const struct kscan_adc_mux_config *config, uint16_t press_mv,
+                                 uint16_t release_mv, uint8_t stable_count);
+
+static int hall_settings_commit(void) {
+    if (!hall_saved_config_valid || hall_active_data == NULL || hall_active_config == NULL ||
+        !hall_config_is_valid(hall_active_config, hall_saved_config.press_threshold_mv,
+                              hall_saved_config.release_threshold_mv,
+                              hall_saved_config.stable_scan_count)) {
+        return 0;
+    }
+
+    k_mutex_lock(&hall_active_data->config_mutex, K_FOREVER);
+    hall_active_data->runtime_press_threshold_mv = hall_saved_config.press_threshold_mv;
+    hall_active_data->runtime_release_threshold_mv = hall_saved_config.release_threshold_mv;
+    hall_active_data->runtime_stable_scan_count = hall_saved_config.stable_scan_count;
+    k_mutex_unlock(&hall_active_data->config_mutex);
+    return 0;
+}
+
+static uint16_t hall_stream_crc16(const uint8_t *bytes, size_t len);
+
+static void hall_command_resync(struct kscan_adc_mux_data *data, uint8_t byte) {
+    if (data->rx_offset == 0) {
+        if (byte == HALL_COMMAND_MAGIC_0) {
+            data->rx_bytes[data->rx_offset++] = byte;
+        }
+        return;
+    }
+    if (data->rx_offset == 1 && byte != HALL_COMMAND_MAGIC_1) {
+        if (byte == HALL_COMMAND_MAGIC_0) {
+            data->rx_offset = 1;
+            data->rx_bytes[0] = HALL_COMMAND_MAGIC_0;
+        } else {
+            data->rx_offset = 0;
+        }
+        return;
+    }
+
+    data->rx_bytes[data->rx_offset++] = byte;
+    if (data->rx_offset < sizeof(struct hall_command_frame)) {
+        return;
+    }
+
+    struct hall_command_frame command;
+    memcpy(&command, data->rx_bytes, sizeof(command));
+    data->rx_offset = 0;
+    if (hall_stream_crc16((const uint8_t *)&command, offsetof(struct hall_command_frame, crc)) !=
+        command.crc) {
+        return;
+    }
+    if (k_msgq_put(data->command_queue, &command, K_NO_WAIT) == 0) {
+        k_work_submit(&data->command_work);
+    }
+}
 
 static void kscan_adc_mux_uart_callback(const struct device *uart, void *user_data) {
     struct kscan_adc_mux_data *data = user_data;
 
-    if (uart_irq_update(uart) <= 0 || !uart_irq_tx_ready(uart)) {
+    if (uart_irq_update(uart) <= 0) {
         return;
     }
 
-    const uint8_t *bytes = (const uint8_t *)&data->tx_frame;
-    while (data->tx_offset < sizeof(data->tx_frame)) {
-        int sent = uart_fifo_fill(uart, bytes + data->tx_offset,
-                                  sizeof(data->tx_frame) - data->tx_offset);
+    if (uart_irq_rx_ready(uart)) {
+        uint8_t bytes[16];
+        int count;
+        while ((count = uart_fifo_read(uart, bytes, sizeof(bytes))) > 0) {
+            for (int i = 0; i < count; i++) {
+                hall_command_resync(data, bytes[i]);
+            }
+        }
+    }
+
+    if (!uart_irq_tx_ready(uart)) {
+        return;
+    }
+    while (data->tx_offset < data->tx_length) {
+        int sent = uart_fifo_fill(uart, data->tx_bytes + data->tx_offset,
+                                  data->tx_length - data->tx_offset);
         if (sent <= 0) {
             return;
         }
@@ -152,11 +311,171 @@ static uint16_t hall_stream_crc16(const uint8_t *data, size_t len) {
     return crc;
 }
 
+static bool hall_config_is_valid(const struct kscan_adc_mux_config *config, uint16_t press_mv,
+                                 uint16_t release_mv, uint8_t stable_count) {
+    if (press_mv < HALL_PRESS_MIN_MV || press_mv > HALL_PRESS_MAX_MV ||
+        release_mv < HALL_RELEASE_MIN_MV || release_mv > HALL_RELEASE_MAX_MV ||
+        stable_count < HALL_STABLE_SCAN_MIN || stable_count > HALL_STABLE_SCAN_MAX) {
+        return false;
+    }
+    return config->press_is_greater ? press_mv > release_mv : press_mv < release_mv;
+}
+
+static void hall_response_fill_config(struct kscan_adc_mux_data *data,
+                                      struct hall_command_frame *response) {
+    k_mutex_lock(&data->config_mutex, K_FOREVER);
+    response->payload_length = 6;
+    sys_put_le16(data->runtime_press_threshold_mv, &response->payload[0]);
+    sys_put_le16(data->runtime_release_threshold_mv, &response->payload[2]);
+    response->payload[4] = data->runtime_stable_scan_count;
+    response->payload[5] = data->stream_enabled ? 1 : 0;
+    k_mutex_unlock(&data->config_mutex);
+}
+
+static void hall_command_process(struct k_work *work) {
+    struct kscan_adc_mux_data *data = CONTAINER_OF(work, struct kscan_adc_mux_data, command_work);
+    const struct kscan_adc_mux_config *config = data->dev->config;
+    struct hall_command_frame command;
+
+    while (k_msgq_get(data->command_queue, &command, K_NO_WAIT) == 0) {
+        struct hall_command_frame response = {
+            .magic = {HALL_COMMAND_MAGIC_0, HALL_RESPONSE_MAGIC_1},
+            .version = HALL_COMMAND_VERSION,
+            .command = command.command,
+            .status = HALL_STATUS_OK,
+            .request_id = command.request_id,
+        };
+
+        if (data->has_last_response && command.request_id == data->last_request_id) {
+            if (k_msgq_put(data->response_queue, &data->last_response, K_MSEC(50)) != 0) {
+                LOG_WRN("Dropped duplicate Hall response %u", command.request_id);
+            }
+            continue;
+        }
+        if (command.version != HALL_COMMAND_VERSION) {
+            response.status = HALL_STATUS_BAD_VERSION;
+        } else if (command.payload_length > HALL_COMMAND_PAYLOAD_SIZE) {
+            response.status = HALL_STATUS_BAD_LENGTH;
+        } else {
+            switch (command.command) {
+            case HALL_COMMAND_GET_CONFIG:
+                if (command.payload_length != 0) {
+                    response.status = HALL_STATUS_BAD_LENGTH;
+                } else {
+                    hall_response_fill_config(data, &response);
+                }
+                break;
+            case HALL_COMMAND_SET_CONFIG: {
+                if (command.payload_length != 5) {
+                    response.status = HALL_STATUS_BAD_LENGTH;
+                    break;
+                }
+                uint16_t press_mv = sys_get_le16(&command.payload[0]);
+                uint16_t release_mv = sys_get_le16(&command.payload[2]);
+                uint8_t stable_count = command.payload[4];
+                if (!hall_config_is_valid(config, press_mv, release_mv, stable_count)) {
+                    response.status = HALL_STATUS_BAD_VALUE;
+                    break;
+                }
+                k_mutex_lock(&data->config_mutex, K_FOREVER);
+                data->runtime_press_threshold_mv = press_mv;
+                data->runtime_release_threshold_mv = release_mv;
+                data->runtime_stable_scan_count = stable_count;
+                memset(data->stable_counts, 0, INST_SAMPLE_COUNT(0));
+                memcpy(data->candidate_state, data->matrix_state,
+                       sizeof(bool) * INST_SAMPLE_COUNT(0));
+                k_mutex_unlock(&data->config_mutex);
+                hall_response_fill_config(data, &response);
+                break;
+            }
+            case HALL_COMMAND_SAVE_CONFIG: {
+                if (command.payload_length != 0) {
+                    response.status = HALL_STATUS_BAD_LENGTH;
+                    break;
+                }
+                struct hall_persisted_config saved;
+                k_mutex_lock(&data->config_mutex, K_FOREVER);
+                saved = (struct hall_persisted_config){
+                    .schema_version = HALL_CONFIG_SCHEMA_VERSION,
+                    .stable_scan_count = data->runtime_stable_scan_count,
+                    .press_threshold_mv = data->runtime_press_threshold_mv,
+                    .release_threshold_mv = data->runtime_release_threshold_mv,
+                };
+                k_mutex_unlock(&data->config_mutex);
+                int rc = settings_save_one("megknob/hall/config", &saved, sizeof(saved));
+                if (rc != 0) {
+                    response.status = HALL_STATUS_STORAGE_ERROR;
+                }
+                hall_response_fill_config(data, &response);
+                break;
+            }
+            case HALL_COMMAND_RESET_CONFIG: {
+                if (command.payload_length != 0) {
+                    response.status = HALL_STATUS_BAD_LENGTH;
+                    break;
+                }
+                k_mutex_lock(&data->config_mutex, K_FOREVER);
+                data->runtime_press_threshold_mv = config->press_threshold_mv;
+                data->runtime_release_threshold_mv = config->release_threshold_mv;
+                data->runtime_stable_scan_count = config->stable_scan_count;
+                memset(data->stable_counts, 0, INST_SAMPLE_COUNT(0));
+                memcpy(data->candidate_state, data->matrix_state,
+                       sizeof(bool) * INST_SAMPLE_COUNT(0));
+                k_mutex_unlock(&data->config_mutex);
+                hall_saved_config_valid = false;
+                int rc = settings_delete("megknob/hall/config");
+                if (rc != 0 && rc != -ENOENT) {
+                    response.status = HALL_STATUS_STORAGE_ERROR;
+                }
+                hall_response_fill_config(data, &response);
+                break;
+            }
+            case HALL_COMMAND_SET_STREAM:
+                if (command.payload_length != 1 || command.payload[0] > 1) {
+                    response.status = command.payload_length != 1 ? HALL_STATUS_BAD_LENGTH
+                                                                  : HALL_STATUS_BAD_VALUE;
+                    break;
+                }
+                k_mutex_lock(&data->config_mutex, K_FOREVER);
+                data->stream_enabled = command.payload[0] != 0;
+                k_mutex_unlock(&data->config_mutex);
+                hall_response_fill_config(data, &response);
+                break;
+            case HALL_COMMAND_PING:
+                if (command.payload_length != 0) {
+                    response.status = HALL_STATUS_BAD_LENGTH;
+                    break;
+                }
+                response.payload_length = 4;
+                response.payload[0] = HALL_STREAM_VERSION;
+                response.payload[1] = HALL_CONFIG_SCHEMA_VERSION;
+                response.payload[2] = HALL_STREAM_MAX_SAMPLES;
+                response.payload[3] = HALL_COMMAND_VERSION;
+                break;
+            default:
+                response.status = HALL_STATUS_BAD_COMMAND;
+                break;
+            }
+        }
+        response.crc = hall_stream_crc16((const uint8_t *)&response,
+                                         offsetof(struct hall_command_frame, crc));
+        data->last_request_id = command.request_id;
+        data->last_response = response;
+        data->has_last_response = true;
+        if (k_msgq_put(data->response_queue, &response, K_MSEC(50)) != 0) {
+            LOG_WRN("Dropped Hall command response %u", response.request_id);
+        }
+    }
+}
+
 static void hall_stream_enqueue(const struct device *dev, uint8_t type) {
     const struct kscan_adc_mux_config *config = dev->config;
     struct kscan_adc_mux_data *data = dev->data;
 
-    if (config->stream_uart == NULL || data->stream_queue == NULL) {
+    k_mutex_lock(&data->config_mutex, K_FOREVER);
+    bool stream_enabled = data->stream_enabled;
+    k_mutex_unlock(&data->config_mutex);
+    if (config->stream_uart == NULL || data->stream_queue == NULL || !stream_enabled) {
         return;
     }
 
@@ -192,15 +511,16 @@ static void hall_stream_enqueue(const struct device *dev, uint8_t type) {
     }
 }
 
-static bool kscan_adc_mux_pressed(const struct kscan_adc_mux_config *config, bool was_pressed,
+static bool kscan_adc_mux_pressed(const struct kscan_adc_mux_config *config,
+                                  const struct kscan_adc_mux_data *data, bool was_pressed,
                                   int32_t sample_mv) {
     if (config->press_is_greater) {
-        return was_pressed ? sample_mv > config->release_threshold_mv
-                           : sample_mv > config->press_threshold_mv;
+        return was_pressed ? sample_mv > data->runtime_release_threshold_mv
+                           : sample_mv > data->runtime_press_threshold_mv;
     }
 
-    return was_pressed ? sample_mv < config->release_threshold_mv
-                       : sample_mv < config->press_threshold_mv;
+    return was_pressed ? sample_mv < data->runtime_release_threshold_mv
+                       : sample_mv < data->runtime_press_threshold_mv;
 }
 
 static int kscan_adc_mux_set_address(const struct device *dev, uint8_t address) {
@@ -293,11 +613,12 @@ static int kscan_adc_mux_read(const struct device *dev) {
             return err;
         }
 
+        k_mutex_lock(&data->config_mutex, K_FOREVER);
         for (uint8_t row = 0; row < config->channel_count; row++) {
             int32_t sample_mv = samples_mv[row];
             uint16_t idx = (row * config->column_count) + col;
             data->voltages_mv[idx] = CLAMP(sample_mv, 0, UINT16_MAX);
-            bool pressed = kscan_adc_mux_pressed(config, data->matrix_state[idx], sample_mv);
+            bool pressed = kscan_adc_mux_pressed(config, data, data->matrix_state[idx], sample_mv);
 
             LOG_DBG("ADC mux r%u c%u sample=%d pressed=%d stable=%u", row, col, sample_mv, pressed,
                     data->stable_counts[idx]);
@@ -309,7 +630,7 @@ static int kscan_adc_mux_read(const struct device *dev) {
             }
 
             if (pressed == data->candidate_state[idx]) {
-                if (data->stable_counts[idx] < config->stable_scan_count) {
+                if (data->stable_counts[idx] < data->runtime_stable_scan_count) {
                     data->stable_counts[idx]++;
                 }
             } else {
@@ -317,7 +638,7 @@ static int kscan_adc_mux_read(const struct device *dev) {
                 data->stable_counts[idx] = 1;
             }
 
-            if (data->stable_counts[idx] >= config->stable_scan_count) {
+            if (data->stable_counts[idx] >= data->runtime_stable_scan_count) {
                 data->matrix_state[idx] = pressed;
                 data->stable_counts[idx] = 0;
                 if (data->callback) {
@@ -325,6 +646,7 @@ static int kscan_adc_mux_read(const struct device *dev) {
                 }
             }
         }
+        k_mutex_unlock(&data->config_mutex);
     }
 
     uint64_t total_cycles = hall_cycles_elapsed(scan_start);
@@ -394,6 +716,21 @@ static int kscan_adc_mux_init(const struct device *dev) {
     struct kscan_adc_mux_data *data = dev->data;
 
     data->dev = dev;
+    k_mutex_init(&data->config_mutex);
+    hall_active_data = data;
+    hall_active_config = config;
+    data->stream_enabled = true;
+    data->runtime_press_threshold_mv = config->press_threshold_mv;
+    data->runtime_release_threshold_mv = config->release_threshold_mv;
+    data->runtime_stable_scan_count = config->stable_scan_count;
+    if (hall_saved_config_valid && hall_config_is_valid(config, hall_saved_config.press_threshold_mv,
+                                                        hall_saved_config.release_threshold_mv,
+                                                        hall_saved_config.stable_scan_count)) {
+        data->runtime_press_threshold_mv = hall_saved_config.press_threshold_mv;
+        data->runtime_release_threshold_mv = hall_saved_config.release_threshold_mv;
+        data->runtime_stable_scan_count = hall_saved_config.stable_scan_count;
+    }
+    k_work_init(&data->command_work, hall_command_process);
 
     if (config->stream_uart != NULL && !device_is_ready(config->stream_uart)) {
         LOG_ERR("ADC stream UART is not ready");
@@ -408,6 +745,7 @@ static int kscan_adc_mux_init(const struct device *dev) {
             LOG_ERR("Failed to configure ADC stream UART callback: %d", err);
             return err;
         }
+        uart_irq_rx_enable(config->stream_uart);
     }
 
     for (uint8_t i = 0; i < config->address_gpio_count; i++) {
@@ -505,6 +843,8 @@ static const struct kscan_driver_api kscan_adc_mux_api = {
     static struct k_work_q kscan_adc_mux_work_queue_##n;                                             \
     K_THREAD_STACK_DEFINE(kscan_adc_mux_work_queue_stack_##n, 1024);                                 \
     K_MSGQ_DEFINE(kscan_adc_mux_stream_queue_##n, sizeof(struct hall_stream_frame), 4, 4);             \
+    K_MSGQ_DEFINE(kscan_adc_mux_command_queue_##n, sizeof(struct hall_command_frame), 4, 4);           \
+    K_MSGQ_DEFINE(kscan_adc_mux_response_queue_##n, sizeof(struct hall_command_frame), 4, 4);          \
     static void kscan_adc_mux_stream_thread_##n(void *, void *, void *);                               \
     K_THREAD_DEFINE(kscan_adc_mux_stream_tid_##n, 1024, kscan_adc_mux_stream_thread_##n, NULL, NULL,  \
                     NULL, K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);                                    \
@@ -520,6 +860,8 @@ static const struct kscan_driver_api kscan_adc_mux_api = {
         .work_queue_stack = kscan_adc_mux_work_queue_stack_##n,                                      \
         .work_queue_stack_size = K_THREAD_STACK_SIZEOF(kscan_adc_mux_work_queue_stack_##n),           \
         .stream_queue = &kscan_adc_mux_stream_queue_##n,                                             \
+        .command_queue = &kscan_adc_mux_command_queue_##n,                                           \
+        .response_queue = &kscan_adc_mux_response_queue_##n,                                         \
     };                                                                                                \
                                                                                                       \
     static const struct kscan_adc_mux_config kscan_adc_mux_config_##n = {                             \
@@ -544,14 +886,20 @@ static const struct kscan_driver_api kscan_adc_mux_api = {
     static void kscan_adc_mux_stream_thread_##n(void *a, void *b, void *c) {                          \
         ARG_UNUSED(a); ARG_UNUSED(b); ARG_UNUSED(c);                                                  \
         struct hall_stream_frame frame;                                                              \
+        struct hall_command_frame response;                                                          \
         const struct device *uart = kscan_adc_mux_config_##n.stream_uart;                             \
         struct kscan_adc_mux_data *data = &kscan_adc_mux_data_##n;                                   \
         while (true) {                                                                                \
-            k_msgq_get(&kscan_adc_mux_stream_queue_##n, &frame, K_FOREVER);                           \
+            bool is_response = k_msgq_get(&kscan_adc_mux_response_queue_##n, &response, K_NO_WAIT) == 0; \
+            if (!is_response && k_msgq_get(&kscan_adc_mux_stream_queue_##n, &frame, K_MSEC(10)) != 0) { \
+                continue;                                                                             \
+            }                                                                                         \
             if (uart == NULL) { continue; }                                                          \
             uint32_t dtr = 0;                                                                         \
             if (uart_line_ctrl_get(uart, UART_LINE_CTRL_DTR, &dtr) == 0 && dtr == 0) { continue; }   \
-            data->tx_frame = frame;                                                                  \
+            data->tx_length = is_response ? sizeof(response) : sizeof(frame);                         \
+            memcpy(data->tx_bytes, is_response ? (const void *)&response : (const void *)&frame,      \
+                   data->tx_length);                                                                  \
             data->tx_offset = 0;                                                                     \
             uart_irq_tx_enable(uart);                                                                \
             k_sem_take(&data->tx_queued, K_FOREVER);                                                 \
