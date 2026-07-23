@@ -10,3 +10,5 @@ cp media/videos/megknob_product/1080p30/megknob_product_intro.mp4 ./megknob_prod
 cp media/videos/megknob_pipeline_3d/2160p30/megknob_signal_pipeline_3d_4k.mp4 ./megknob_signal_pipeline_3d_4k.mp4
 "$PYTHON" -m manim -qk --fps 30 --resolution 3840,2160 megknob_product_3d.py MegKnobProduct3D -o megknob_product_intro_3d_4k.mp4
 cp media/videos/megknob_product_3d/2160p30/megknob_product_intro_3d_4k.mp4 ./megknob_product_intro_3d_4k.mp4
+"$PYTHON" -m manim -qk --fps 30 --resolution 3840,2160 megknob_ble_commit_3d.py MegKnobBLECommit3D -o megknob_ble_commit_explainer_3d_4k.mp4
+cp media/videos/megknob_ble_commit_3d/2160p30/megknob_ble_commit_explainer_3d_4k.mp4 ./megknob_ble_commit_explainer_3d_4k.mp4

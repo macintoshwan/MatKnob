@@ -3,6 +3,7 @@ id: megknob
 name: MegKnob
 type: shield
 url: https://zmk.dev/docs/hardware-integration/adding-shields
+description: MegKnob is designed and validated for nice!nano v2 (nRF52840).
 requires: [pro_micro]
 features:
   - keys

@@ -244,8 +244,12 @@ jobs:
                 yaml.loadAll(fs.readFileSync(f, "utf8"))
               );
 
-              const boardAndShield = (b, s) => {
-                if (s.siblings) {
+            const boardAndShield = (b, s) => {
+              if (s.id === "megknob" && b.id !== "nice_nano//zmk") {
+                return [];
+              }
+
+              if (s.siblings) {
                   return s.siblings.map(shield => ({
                     board: b.id,
                     shield,
