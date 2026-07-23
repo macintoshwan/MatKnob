@@ -11,7 +11,7 @@ if errorlevel 1 (
 )
 
 set BOARD=%~1
-if "%BOARD%"=="" set BOARD=nice_nano_v2
+if "%BOARD%"=="" set BOARD=nice_nano
 
 echo Building MegKnob for %BOARD%...
 west build -p always -d build-megknob -b %BOARD% -- -DSHIELD=megknob

@@ -15,14 +15,6 @@
         zmk,underglow = &led_strip;
     };
 
-    encoder: encoder {
-        compatible = "alps,ec11";
-        a-gpios = <&gpio0 11 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
-        b-gpios = <&gpio0 24 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
-        steps = <80>;
-        status = "okay";
-    };
-
     kscan0: kscan {
         compatible = "zmk,kscan-composite";
         rows = <4>;
@@ -46,13 +38,10 @@
             , <&gpio0 9 GPIO_ACTIVE_HIGH>
             , <&gpio0 10 GPIO_ACTIVE_HIGH>;
         io-channels = <&adc 7>, <&adc 5>, <&adc 0>;
-        polling-interval-ms = <0>;
-        settle-time-us = <10>;
-        press-threshold-mv = <900>;
-        release-threshold-mv = <1400>;
-        stable-scan-count = <3>;
-        stream-uart = <&megknob_hall_uart>;
-        mode-switch-position = <19>;
+        polling-interval-ms = <5>;
+        settle-time-us = <20>;
+        press-threshold-mv = <1000>;
+        release-threshold-mv = <1300>;
     };
 
     kscan_wheel: kscan_wheel {
@@ -62,7 +51,10 @@
         debounce-release-ms = <10>;
         diode-direction = "col2row";
         row-gpios = <&gpio1 11 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
-        col-gpios = <&gpio1 0 GPIO_ACTIVE_HIGH>;
+        col-gpios
+            = <&gpio1 0 GPIO_ACTIVE_HIGH>
+            , <&gpio0 11 GPIO_ACTIVE_HIGH>
+            , <&gpio0 24 GPIO_ACTIVE_HIGH>;
     };
 
     megknob_layout: physical_layout_0 {
@@ -88,7 +80,9 @@
             , <&key_physical_attrs 100 100 700 300 0 0 0>
             , <&key_physical_attrs 100 100 800 300 0 0 0>
             , <&key_physical_attrs 100 100 900 300 0 0 0>
-            , <&key_physical_attrs 100 100   0 400 0 0 0>;
+            , <&key_physical_attrs 100 100   0 400 0 0 0>
+            , <&key_physical_attrs 100 100 100 400 0 0 0>
+            , <&key_physical_attrs 100 100 200 400 0 0 0>;
         transform = <&megknob_transform>;
     };
 
@@ -101,14 +95,8 @@
             RC(0,1) RC(0,6) RC(1,1) RC(1,6) RC(2,6)
             RC(0,0) RC(0,7) RC(1,0) RC(1,7)
             RC(0,3) RC(0,5) RC(1,3) RC(1,5) RC(2,7)
-            RC(3,0)
+            RC(3,0) RC(3,1) RC(3,2)
         >;
-    };
-};
-
-&zephyr_udc0 {
-    megknob_hall_uart: megknob_hall_uart {
-        compatible = "zephyr,cdc-acm-uart";
     };
 };
 
@@ -121,7 +109,7 @@
         reg = <0>;
         zephyr,gain = "ADC_GAIN_1_6";
         zephyr,reference = "ADC_REF_INTERNAL";
-        zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 3)>;
+        zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
         zephyr,input-positive = <NRF_SAADC_AIN0>;
         zephyr,resolution = <12>;
     };
@@ -130,7 +118,7 @@
         reg = <5>;
         zephyr,gain = "ADC_GAIN_1_6";
         zephyr,reference = "ADC_REF_INTERNAL";
-        zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 3)>;
+        zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
         zephyr,input-positive = <NRF_SAADC_AIN5>;
         zephyr,resolution = <12>;
     };
@@ -139,7 +127,7 @@
         reg = <7>;
         zephyr,gain = "ADC_GAIN_1_6";
         zephyr,reference = "ADC_REF_INTERNAL";
-        zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 3)>;
+        zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
         zephyr,input-positive = <NRF_SAADC_AIN7>;
         zephyr,resolution = <12>;
     };

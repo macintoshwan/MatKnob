@@ -26,10 +26,6 @@ properties:
     type: int
     default: 20
 
-  dummy-read:
-    type: boolean
-    description: Perform and discard one ADC conversion before retaining each channel sample.
-
   press-threshold-mv:
     type: int
     required: true
@@ -41,16 +37,3 @@ properties:
   press-is-greater:
     type: boolean
     description: Treat voltages greater than the press threshold as pressed.
-
-  stable-scan-count:
-    type: int
-    default: 3
-    description: Number of consecutive scans required before reporting a state change.
-
-  stream-uart:
-    type: phandle
-    description: Optional UART or USB CDC ACM device used to stream all ADC channel voltages.
-
-  mode-switch-position:
-    type: int
-    description: Optional transformed ZMK key position which cycles the host display mode.
