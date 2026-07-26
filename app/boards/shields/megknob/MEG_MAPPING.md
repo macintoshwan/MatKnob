@@ -17,25 +17,25 @@
 
 | 当前按键 | MEG编号 | 4051芯片 | 4051通道 | ADC输入 | 固件RC | 手动更正 |
 |---|---:|---|---|---|---|---|
-| TAB | MEG0 | U26 | Y2 | ADC3 / P0.31 | RC(0,2) | |
-| Q | MEG1 | U26 | Y4 | ADC3 / P0.31 | RC(0,4) | |
+| TAB | MEG0 | U28 | Y2 | ADC1 / P0.02 | RC(2,2) | |
+| Q | MEG1 | U28 | Y4 | ADC1 / P0.02 | RC(2,4) | |
 | W | MEG2 | U27 | Y2 | ADC2 / P0.29 | RC(1,2) | |
 | E | MEG3 | U27 | Y4 | ADC2 / P0.29 | RC(1,4) | |
-| R | MEG4 | U28 | Y4 | ADC1 / P0.02 | RC(2,4) | |
-| CAPS | MEG5 | U26 | Y1 | ADC3 / P0.31 | RC(0,1) | |
-| A | MEG6 | U26 | Y6 | ADC3 / P0.31 | RC(0,6) | |
+| R | MEG4 | U26 | Y4 | ADC3 / P0.31 | RC(0,4) | |
+| CAPS | MEG5 | U28 | Y1 | ADC1 / P0.02 | RC(2,1) | |
+| A | MEG6 | U28 | Y6 | ADC1 / P0.02 | RC(2,6) | |
 | S | MEG7 | U27 | Y1 | ADC2 / P0.29 | RC(1,1) | |
 | D | MEG8 | U27 | Y6 | ADC2 / P0.29 | RC(1,6) | |
-| F | MEG9 | U28 | Y6 | ADC1 / P0.02 | RC(2,6) | |
-| LEFT_SHIFT | MEG10 | U26 | Y0 | ADC3 / P0.31 | RC(0,0) | |
-| Z | MEG11 | U26 | Y7 | ADC3 / P0.31 | RC(0,7) | |
+| F | MEG9 | U26 | Y6 | ADC3 / P0.31 | RC(0,6) | |
+| LEFT_SHIFT | MEG10 | U28 | Y0 | ADC1 / P0.02 | RC(2,0) | |
+| Z | MEG11 | U28 | Y7 | ADC1 / P0.02 | RC(2,7) | |
 | X | MEG12 | U27 | Y0 | ADC2 / P0.29 | RC(1,0) | |
 | C | MEG13 | U27 | Y7 | ADC2 / P0.29 | RC(1,7) | |
-| BACKSPACE | MEG15 | U26 | Y3 | ADC3 / P0.31 | RC(0,3) | |
-| LEFT_CTRL | MEG16 | U26 | Y5 | ADC3 / P0.31 | RC(0,5) | |
+| BACKSPACE | MEG15 | U28 | Y3 | ADC1 / P0.02 | RC(2,3) | |
+| LEFT_CTRL | MEG16 | U28 | Y5 | ADC1 / P0.02 | RC(2,5) | |
 | WIN | MEG17 | U27 | Y3 | ADC2 / P0.29 | RC(1,3) | |
 | ALT | MEG18 | U27 | Y5 | ADC2 / P0.29 | RC(1,5) | |
-| SPACE | MEG14 | U28 | Y7 | ADC1 / P0.02 | RC(2,7) | |
+| SPACE | MEG14 | U26 | Y7 | ADC3 / P0.31 | RC(0,7) | |
 
 ## 当前滚轮映射
 
@@ -49,23 +49,23 @@
 
 | MEG编号 | 4051芯片 | 4051通道 | ADC输入 | 固件RC | 当前按键 | 手动更正 |
 |---:|---|---|---|---|---|---|
-| MEG0 | U26 | Y2 | ADC3 / P0.31 | RC(0,2) | TAB | |
-| MEG1 | U26 | Y4 | ADC3 / P0.31 | RC(0,4) | Q | |
+| MEG0 | U28 | Y2 | ADC1 / P0.02 | RC(2,2) | TAB | |
+| MEG1 | U28 | Y4 | ADC1 / P0.02 | RC(2,4) | Q | |
 | MEG2 | U27 | Y2 | ADC2 / P0.29 | RC(1,2) | W | |
 | MEG3 | U27 | Y4 | ADC2 / P0.29 | RC(1,4) | E | |
-| MEG4 | U28 | Y4 | ADC1 / P0.02 | RC(2,4) | R | |
-| MEG5 | U26 | Y1 | ADC3 / P0.31 | RC(0,1) | CAPS | |
-| MEG6 | U26 | Y6 | ADC3 / P0.31 | RC(0,6) | A | |
+| MEG4 | U26 | Y4 | ADC3 / P0.31 | RC(0,4) | R | |
+| MEG5 | U28 | Y1 | ADC1 / P0.02 | RC(2,1) | CAPS | |
+| MEG6 | U28 | Y6 | ADC1 / P0.02 | RC(2,6) | A | |
 | MEG7 | U27 | Y1 | ADC2 / P0.29 | RC(1,1) | S | |
 | MEG8 | U27 | Y6 | ADC2 / P0.29 | RC(1,6) | D | |
-| MEG9 | U28 | Y6 | ADC1 / P0.02 | RC(2,6) | F | |
-| MEG10 | U26 | Y0 | ADC3 / P0.31 | RC(0,0) | LEFT_SHIFT | |
-| MEG11 | U26 | Y7 | ADC3 / P0.31 | RC(0,7) | Z | |
+| MEG9 | U26 | Y6 | ADC3 / P0.31 | RC(0,6) | F | |
+| MEG10 | U28 | Y0 | ADC1 / P0.02 | RC(2,0) | LEFT_SHIFT | |
+| MEG11 | U28 | Y7 | ADC1 / P0.02 | RC(2,7) | Z | |
 | MEG12 | U27 | Y0 | ADC2 / P0.29 | RC(1,0) | X | |
 | MEG13 | U27 | Y7 | ADC2 / P0.29 | RC(1,7) | C | |
-| MEG14 | U28 | Y7 | ADC1 / P0.02 | RC(2,7) | SPACE | |
-| MEG15 | U26 | Y3 | ADC3 / P0.31 | RC(0,3) | BACKSPACE | |
-| MEG16 | U26 | Y5 | ADC3 / P0.31 | RC(0,5) | LEFT_CTRL | |
+| MEG14 | U26 | Y7 | ADC3 / P0.31 | RC(0,7) | SPACE | |
+| MEG15 | U28 | Y3 | ADC1 / P0.02 | RC(2,3) | BACKSPACE | |
+| MEG16 | U28 | Y5 | ADC1 / P0.02 | RC(2,5) | LEFT_CTRL | |
 | MEG17 | U27 | Y3 | ADC2 / P0.29 | RC(1,3) | WIN | |
 | MEG18 | U27 | Y5 | ADC2 / P0.29 | RC(1,5) | ALT | |
 
