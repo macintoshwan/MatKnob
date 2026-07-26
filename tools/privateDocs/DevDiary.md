@@ -394,6 +394,66 @@
 
 # 开发日志（倒序）
 
+## 2026-07-23：RGB 闪烁与 BLE 成功连接 Know-How（含失败方案复盘）
+
+### 背景
+
+`3699221f → df656f66 → a7123a1d` 三个提交陆续为 MegKnob 打开 BLE、补齐 Controller、收敛构建目标，但实测下来蓝牙连接和 RGB underglow 表现都不稳定。最终在 `4113e8ba`（`revert(megknob): restore stable BLE keyboard firmware`）上验证通过：**RGB 能正常闪烁、主机能稳定配对并保持连接**。本章记录这次收敛过程中，成功方案具体做对了什么，以及之前几版为什么会失败，作为后续再动 BLE/RGB 相关配置时的 Know-How 参考。
+
+### 最终成功方案（4113e8ba）
+
+**1. Bluetooth Controller 交给 Kconfig 默认依赖链自动 select，不手动显式声明**
+
+```text
+CONFIG_ZMK_BLE=y
+CONFIG_BT=y
+CONFIG_BT_CTLR_PHY_2M=n
+```
+
+没有出现 `CONFIG_BT_CTLR=y`。nRF52840 在 Zephyr 里的 BT Controller 是否启用、启用哪一种（内建 Zephyr Link Layer / SoftDevice Controller）本身是由 `CONFIG_BT=y` 结合 board 的 defconfig、`CONFIG_BT_LL_SW_SPLIT` 等选项通过 `select`/`depends on` 自动推导出来的。手动显式写 `CONFIG_BT_CTLR=y` 并不会让协议栈更完整，反而可能和自动推导出的组合产生冲突，或者在某些 Kconfig 求值顺序下被其他隐式选项覆盖成不一致的状态，从而出现"编译能过，但实际起不来 Link Layer/广播"的情况。
+
+真正对连接稳定性起作用的是新加的一行 `CONFIG_BT_CTLR_PHY_2M=n`：显式关闭 2M PHY，只保留 1M PHY 广播/连接。2M PHY 虽然吞吐更高，但对天线布局、主机适配器兼容性要求更高，在早期打样阶段容易表现为"能扫描到设备，但连接后很快断开"或"配对成功但输入不稳定"。
+
+**2. keymap 从两层裁剪回一层，去掉尚未验证稳定的外围绑定**
+
+成功版本的 `megknob.keymap` 只有一个 `default_layer`，且只保留三个最基础的 RGB 绑定：
+
+```dts
+&rgb_ug RGB_TOG  &rgb_ug RGB_EFF  &rgb_ug RGB_BRI
+```
+
+之前 `3699221f` 引入的 `function_layer` 里塞了 `sensor-bindings`、`&bt BT_SEL 0..4`、`&bt BT_CLR`、`&out OUT_TOG/OUT_USB/OUT_BLE`、5 个 RGB 子命令、`&bootloader` 等十几个绑定，还依赖一个 `sensors { compatible = "zmk,keymap-sensors"; }` 节点和 `&encoder` 设备树节点。任何一个环节（`sensors` 节点接线、`bt` 行为的 profile 状态机、encoder 的 A/B 相位）出问题都会表现为"键盘整体不工作"，无法定位到底是 BLE 层、RGB 层还是 encoder 层的问题。回退版本把验证面收窄到"矩阵按键 + 三个 RGB 命令"，才第一次能明确看到 RGB 灯效正常切换。
+
+**3. `kscan_adc_mux.c` 驱动回退到同步阻塞的最简实现**
+
+去掉了此前为 Hall 数据回传新增的：CDC ACM 命令协议（`hall_command_frame`/`hall_stream_frame`）、独立 `k_work_q` 扫描线程、`k_mutex` 保护的运行时配置、settings 持久化、批量 ADC + Gray-code 寻址优化、`timing_*` 性能统计等一整套机制，恢复成"每列依次读取三路 ADC、`k_work_schedule` 周期重触发"的最初版本。这部分代码本身跟 BLE/RGB 没有直接关系，但它引入了额外的线程调度、mutex 竞争和中断驱动的 UART 收发，会挤占 BLE 协议栈需要的 CPU 时间片和优先级窗口，在同一个提交里叠加太多变量，使得连接失败到底是射频、协议栈还是驱动调度问题变得无法区分。回退后 BLE 和 RGB 才有了一个"干净"的验证环境。
+
+**4. Build workflow 目标同时收敛到 `nice_nano`（非 `nice_nano//zmk`）**
+
+```diff
+- if (s.id === "megknob" && b.id !== "nice_nano//zmk") {
++ if (s.id === "megknob" && b.id !== "nice_nano") {
+```
+
+避免 CI 矩阵里出现和实际打样硬件不一致的构建目标，保证"验证通过的固件"和"实际刷入板子的固件"是同一份产物。
+
+### 失败方案对比
+
+| 方案 | 关键改动 | 结果 | 失败原因分析 |
+|---|---|---|---|
+| ① `2d5021a9` 阶段（仅 CDC） | `CONFIG_ZMK_BLE=n`、`CONFIG_BT=n`，keymap 全 `&none` | 不适用（本就未开 BLE） | 作为纯 Hall 采集基线，未涉及无线，仅作为对照 |
+| ② `3699221f` 首次开 BLE | 打开 `CONFIG_ZMK_BLE=y`/`CONFIG_BT=y`，未显式处理 Controller/PHY；keymap 一次性加入双层 19+ 个绑定、`sensors` 节点、`encoder` 设备树节点 | 蓝牙连接不稳定，RGB 表现异常 | 变量一次性引入过多（BLE Host + 多层复杂 keymap + encoder 传感器），且未处理 PHY 兼容性，无法定位具体故障点 |
+| ③ `df656f66` 显式加 Controller | 新增 `CONFIG_BT_CTLR=y`，同时 `a7123a1d` 收紧构建目标，`kscan_adc_mux.c` 又叠加了 CDC 协议栈、独立线程、mutex 等大改 | 仍不稳定 | 显式 `BT_CTLR=y` 未解决根本问题（真正缺的是 PHY 兼容性配置），同时 Hall 驱动的线程/中断改造与 BLE 协议栈抢占 CPU 调度窗口，问题面进一步扩大而非收敛 |
+| ④ `4113e8ba` revert（成功） | 交还 Controller 给 Kconfig 自动 select；显式关闭 `BT_CTLR_PHY_2M`；keymap 收窄到 1 层 3 个 RGB 绑定；`kscan_adc_mux.c` 回退为同步阻塞最简实现；构建目标精确到 `nice_nano` | **RGB 正常闪烁，BLE 稳定配对连接**，CI（Build / Hardware Metadata Validation）均 success | 同一时间只保留"能验证 BLE + RGB"所必需的最小变更集，移除了会争抢调度资源或引入未验证状态机的外围功能 |
+
+### Know-How 总结
+
+1. **Kconfig 层面，"显式声明"不等于"更正确"。** Zephyr 的 Bluetooth Controller 选择本身有一套通过 SoC/board defconfig 驱动的默认推导逻辑；手动 `select` 一个本该被自动选中的符号，只在明确知道要覆盖默认行为时才有意义，否则容易造成不可预期的组合状态。遇到"编译通过但功能不工作"时，优先怀疑的应该是更细粒度的行为开关（如 PHY、连接参数），而不是重复声明已经默认打开的顶层符号。
+2. **PHY 兼容性是 BLE 连接稳定性里容易被忽视的一环。** `CONFIG_BT_CTLR_PHY_2M=n` 这种"退一步换稳定性"的配置，在打样阶段、天线/PCB 尚未做过射频验证时，往往比追求更高吞吐更重要。
+3. **调试无线功能时必须控制变量数量。** 一次提交里同时改协议栈配置、keymap 绑定数量、驱动线程模型、CI 构建矩阵，一旦出问题就无法判断是哪一层导致的。`4113e8ba` 的 revert 本质上是"退回到只有一个变量（BLE 开关）"的状态，再逐步往上加。
+4. **验证用的 keymap 应该比目标 keymap 更简单。** 先验证"矩阵输入 + 最基础的 RGB 命令"这个最小闭环，再逐步加回 `bt BT_SEL`、`out OUT_TOG`、encoder 传感器等外围功能，每加一层都单独验证，而不是一次性拼齐所有绑定再整体测试。
+5. **外围驱动改造（Hall 数据回传协议、独立线程）应该和无线协议栈验证分开进行。** 两者都会消耗 CPU 调度窗口和中断优先级，混在一起改会互相掩盖问题，应该先确认 BLE/RGB 基线稳定后，再单独引入驱动层的性能优化。
+
 ## 2026-07-20：1000 Hz 目标达成
 
 CDC 中断批量发送版本实测结果：
