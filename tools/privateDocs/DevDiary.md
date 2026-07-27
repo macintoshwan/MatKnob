@@ -33,6 +33,17 @@
 - 当前桌面上位机已经证明协议 v3 可稳定传输实时波形，但还没有网页配置器，也没有设备端参数写入命令；
 - 当前固定阈值是按下 `< 900 mV`、释放 `> 1400 mV`、连续 3 次扫描确认。
 
+### 当前状态更新（2026-07-27）
+
+以下内容记录相对“当前起点”快照之后的实际进展，用于同步最新真实状态，历史快照本身保留不做修改：
+
+- **USB HID / BLE HID 均已开启并可用**：`CONFIG_ZMK_USB=y`、`CONFIG_ZMK_BLE=y`、`CONFIG_BT=y`，阶段 2、阶段 4 的目标已经在实机上验证，RGB underglow 灯效可正常闪烁，BLE 能稳定配对连接（见 2026-07-23 相关日志）；
+- **`megknob.keymap` 已不是全 `&none`**：当前为单层 keymap，包含全部字母/修饰键位与 3 个 RGB 控制绑定；蓝牙 profile 切换、输出切换、多层功能等仍未回归，属于阶段 6 未完成部分；
+- **Hall 按键矩阵映射错误已修正**（`33fdd7a2`）：`MEG_MAPPING.md` 记录的 RC↔MEG↔4051 通道对照表已经和固件 `megknob_transform` 对齐，实测不再串键；
+- **新发现且尚未修复的问题**：断电/断连时 `kscan_adc_mux_disable()` 不清空按键状态，Ctrl/Alt/Win 等 Hall 轴 modifier 可能残留为“按下”，需要用户手动按键才能让主机恢复正常（详见 2026-07-27 日志与阶段 6 新增工作项）；
+- **滚轮仍是原始 1×3 GPIO 矩阵**，A/B 两相未迁移到正交编码器，阶段 1 尚未开始；
+- **网页上位机、OLED、电量与深度睡眠**（阶段 5、7、8）均未开始。
+
 ### 实施原则
 
 - **先修滚轮输入模型，再恢复完整键位**：正交编码器属于基础输入设备，应在全键 HID 验收前解决，避免把错误的 A/B 矩阵模型带进日用固件。
@@ -241,6 +252,11 @@
 
 ### 阶段 6：恢复完整键位与输出切换
 
+**进度更新（2026-07-27）**
+
+- `MEG_MAPPING.md` 的 RC 映射错位已修正（`33fdd7a2`），实测按键映射正确、不再串键，工作内容第 1 项已完成；
+- 新发现风险：断电/断连时 `kscan_adc_mux_disable()` 不会清空 `matrix_state[]`，也不会补发释放事件，导致 Ctrl/Alt/Win 等 Hall 轴 modifier 可能残留为“按下”状态，主机需要用户手动按键才能恢复。这属于工作内容第 6 项（“USB 与 BLE 切换期间不会残留 modifier”）尚未覆盖到的场景——之前验证的是**输出切换**，这次暴露的是**断电/断连**，两者触发路径不同，需要分别验证和修复。详见开发日志 2026-07-27 条目。
+
 **工作内容**
 
 1. 按 `MEG_MAPPING.md` 恢复全部确认存在的磁轴键；
@@ -248,14 +264,17 @@
 3. 设计至少一个功能层，放置蓝牙 profile、清除配对、USB/BLE 输出切换、RGB 和调试功能；
 4. 检查物理布局目前只有 MEG0–MEG18 的实际映射，不把 24 个采样槽位误当成 24 个都已安装的按键；
 5. 做逐键 pressed/released 日志，核对矩阵位置、键帽标识和发送键码；
-6. 验证 USB 与 BLE 切换期间不会残留 modifier 或卡住普通键。
+6. 验证 USB 与 BLE 切换期间不会残留 modifier 或卡住普通键；
+7. **（新增）修复 `kscan_adc_mux_disable()`，在停止扫描前对所有仍处于按下状态的位置补发一次释放回调**，避免断电/断连场景下 modifier 卡在“按下”状态；
+8. **（新增）评估在连接状态变化（USB 拔出、BLE 断开）时主动触发一次全键释放**，覆盖“设备未被显式 disable，但连接已经断开”的场景，不能只依赖 `kscan disable` 路径。
 
 **验收标准**
 
 - 全键矩阵与预期布局一致；
 - 每个 modifier 与多键组合正确；
 - 输出切换前主动释放旧端点的按键状态；
-- 位置 19 不再触发 viewer mode 冲突。
+- 位置 19 不再触发 viewer mode 冲突；
+- **（新增）按住 Ctrl/Alt/Win 或任意组合键时直接拔电/断连，重新连接后主机不残留任何 modifier 或按键状态，无需手动按键“复位”**。
 
 ### 阶段 7：点亮并集成 0.91 寸 128×32 OLED
 
@@ -393,6 +412,68 @@
 ---
 
 # 开发日志（倒序）
+
+## 2026-07-27：断连/断电后 Ctrl、Alt、Win 卡键问题分析（Know-How）
+
+### 现象
+
+按键映射修正后（见下一条日志），键盘功能验证正常。但接上电脑使用一段时间后，如果直接给键盘断电（拔 USB 或电池耗尽/移除），电脑上的一些操作会被“卡住”，表现类似 `Ctrl`、`Alt`、`Win` 一直处于按下状态；断电后必须在物理上把这几个键各按一下并保持一会儿，系统才会恢复正常。
+
+### 根因定位
+
+`LEFT_CTRL`、`LGUI`（Win）、`LALT` 在 MegKnob 上都不是普通机械矩阵键，而是走 `kscan_adc_mux` 的 Hall/磁轴 ADC 阈值判断（见 `MEG_MAPPING.md`：`MEG16/LEFT_CTRL`、`MEG17/WIN`、`MEG18/ALT`）。问题出在驱动和主机 HID 状态机的交互上：
+
+1. **驱动没有“断连时清空按键状态”的机制。**
+
+```160:163:app/module/drivers/kscan/kscan_adc_mux.c
+static int kscan_adc_mux_disable(const struct device *dev) {
+    struct kscan_adc_mux_data *data = dev->data;
+
+    return k_work_cancel_delayable(&data->work) < 0 ? -EIO : 0;
+}
+```
+
+`disable_callback` 只是取消了周期扫描的 `k_work_delayable`，`matrix_state[]` 里记录的“当前哪些位置处于按下状态”完全没有清零，也没有在关闭前补发一次“全部释放”的回调。如果 USB/电源被拔掉的瞬间，`matrix_state[]` 里恰好有 Ctrl/Alt/Win 对应的位置是 `true`（按下），设备发给主机的最后一份 HID 报告里这几个 modifier bit 就是 1。
+
+2. **主机没有后续报文可以清除这个状态。** 键盘一旦掉电/断连，不会再发送任何 HID 报告。标准 USB HID 协议下，主机只能依赖设备主动上报的“释放”事件来清除按键状态；设备既没有正常发送 release 报告，也没有一个"设备已断开，清空所有按键"的兜底机制（例如 USB 断开时的 remote wakeup/disconnect 事件通常不会自动帮应用层清 HID 状态），所以操作系统会一直认为这几个 modifier 是被摁着的，直到用户重新按一次对应的物理键，产生新的按下/释放沿，才能把状态"掰回来"。
+3. **Hall 轴在掉电边沿容易产生瞬态误判，放大了这个问题。** 当前配置 `press-threshold-mv = 1000`、`release-threshold-mv = 1300`、`press_is_greater = false`（电压走低代表按下）。断电/拔线瞬间，ADC 参考电压、供电轨或悬空输入的电位变化速度往往快于扫描任务的正常退出，容易让某一次采样"看起来"低于按下阈值，被误判为按下，而这次误判恰好没有机会被后续扫描纠正（因为设备本身正在关闭）。这不是必现的，取决于具体在哪个扫描周期、哪个通道断电瞬间恰好被采到瞬态值。
+4. **ZMK 上游的通用 kscan 矩阵驱动也没有强制的"断连清空"语义**，这不是 MegKnob 独有的缺陷，而是所有基于电平/阈值判断按键状态、又缺少断连兜底逻辑的驱动都存在的通用风险。对普通机械轴矩阵而言，物理开关断电后立刻恢复"断路"状态，被下一次上电扫描直接读到，不会有历史遗留状态，因此这个问题在传统机械键盘上几乎不会被触发；但 Hall 轴由电压阈值决定状态，断电前的最后一帧状态可能残留在主机侧。
+
+### 尚未落地的修复方向（记录以便下一步实施）
+
+1. 在 `kscan_adc_mux_disable()` 里，对所有 `matrix_state[idx] == true` 的位置主动回调一次 `pressed = false`，确保关闭扫描前給 ZMK 输入管线发出完整的释放事件；
+2. 评估在 USB/BLE 连接状态变化（`usb_conn_state_changed` / 输出切换）时，主动触发一次"全键释放"广播，而不是只在 `kscan disable` 路径处理，覆盖"设备没有被禁用、但连接已经断开"的场景；
+3. 评估给 Hall 轴增加断电检测防护：例如在供电即将跌落、或检测到连续异常瞬态时暂停上报，而不是把最后一帧不可信的采样当成正常按键事件；
+4. 补充一个专门的"拔电/拔线卡键回归测试"：按下 Ctrl/Alt/Win 中的一个或多个，在按住状态下直接断电，检查重新连接后主机是否残留 modifier 状态。
+
+### 影响范围
+
+这次问题因为按键映射刚刚修好、Ctrl/Alt/Win 才第一次被实际使用到，才被观察到；但根因（`kscan_adc_mux_disable` 不清空按键状态）在最早的驱动实现里就已经存在，属于一直潜伏、之前没有测试到的缺陷。
+
+## 2026-07-27：修正 Hall 按键矩阵映射，串键问题解决
+
+`33fdd7a2 fix(megknob): correct Hall key matrix mapping` 修正了 `megknob.overlay` 中 `megknob_transform` 的 `RC(row,col)` 映射关系，并同步更新了 `MEG_MAPPING.md` 里 MEG 编号与 4051/ADC 通道的对照表。
+
+修正前记录在案的现象（见更早的 `ADC_ISSUE_ANALYSIS.md` 分析）：`Shift → R`、`Z → Space`、`A → F`、`F → TAB + A` 等串键/错键。修正后实测按键映射已经正确，不再出现串键。
+
+结合此前的分析，这类问题的本质是固件里 RC 位置与实际 4051 通道/ADC 输入的对应关系搭错了，而不是采样阈值或扫描时序问题——`press-threshold-mv`/`release-threshold-mv`/`settle-time-us` 等模拟参数在此次修复前后没有变化，纯粹是 `megknob_transform` 的 `map` 顺序和 `MEG_MAPPING.md` 中记录的 MEG↔RC 对应关系被订正。
+
+**Know-How**：涉及多路模拟开关（4051）+ ADC 复用的按键矩阵，`RC(row,col)` 顺序、4051 的 `Y0..Y7` 通道顺序、以及固件里 ADC row 编号三者必须逐一对齐并留档（`MEG_MAPPING.md` 的价值即在于此）；串键现象优先怀疑映射表顺序错位，而不是急于调整模拟采样参数。
+
+## 2026-07-23：BLE Controller 与构建目标收敛
+
+MegKnob 的实际 MCU 目标一直是 `nice!nano v2`，核心芯片为 nRF52840。为补齐 BLE 协议栈，`megknob.conf` 显式启用了 `CONFIG_BT_CTLR=y`：`CONFIG_ZMK_BLE` 负责 ZMK BLE HID，`CONFIG_BT` 负责 Zephyr Host，`CONFIG_BT_CTLR` 负责 Link Layer、PHY 与 nRF 无线电控制。
+
+后续 Build workflow 曾自动生成 `MegKnob + RP2040` 等无关组合。根因不是产品使用了 RP2040，而是硬件元数据中的 `requires: [pro_micro]` 只表达插针互连兼容；CI 将它解释为应与所有暴露 `pro_micro` 互连的控制器进行笛卡尔积构建。MegKnob overlay 使用 Nordic 专用 `NRF_PSEL`、SAADC 与 nRF pinctrl，因而这些组合没有产品意义。
+
+本次修正：
+
+1. 保留 `requires: [pro_micro]` 表达物理接口，但在元数据描述中明确目标为 `nice!nano v2 (nRF52840)`；
+2. Build matrix 对 MegKnob 仅生成 `nice_nano//zmk` 组合；
+3. BLE Know-How 视频改为解释真实硬件栈，不再把 CI 误生成的 MCU 当成产品设计的一部分；
+4. Windows 本地构建默认目标仍为 `nice_nano_v2`。
+
+工程结论：连接器兼容不等于 MCU 兼容。对使用 SoC 专有 DeviceTree 宏和外设的 shield，CI 构建目标必须显式收敛到实际支持的控制器。
 
 ## 2026-07-23：RGB 闪烁与 BLE 成功连接 Know-How（含失败方案复盘）
 
@@ -590,21 +671,6 @@ v3 时间处理：
 6. 上位机增加设备端分段性能显示。
 
 固件构建成功，最终设备树确认 settle 为 20 µs、acquisition 为 5 µs，UF2 大小 135168 bytes。
-
-## 2026-07-23：BLE Controller 与构建目标收敛
-
-MegKnob 的实际 MCU 目标一直是 `nice!nano v2`，核心芯片为 nRF52840。为补齐 BLE 协议栈，`megknob.conf` 显式启用了 `CONFIG_BT_CTLR=y`：`CONFIG_ZMK_BLE` 负责 ZMK BLE HID，`CONFIG_BT` 负责 Zephyr Host，`CONFIG_BT_CTLR` 负责 Link Layer、PHY 与 nRF 无线电控制。
-
-后续 Build workflow 曾自动生成 `MegKnob + RP2040` 等无关组合。根因不是产品使用了 RP2040，而是硬件元数据中的 `requires: [pro_micro]` 只表达插针互连兼容；CI 将它解释为应与所有暴露 `pro_micro` 互连的控制器进行笛卡尔积构建。MegKnob overlay 使用 Nordic 专用 `NRF_PSEL`、SAADC 与 nRF pinctrl，因而这些组合没有产品意义。
-
-本次修正：
-
-1. 保留 `requires: [pro_micro]` 表达物理接口，但在元数据描述中明确目标为 `nice!nano v2 (nRF52840)`；
-2. Build matrix 对 MegKnob 仅生成 `nice_nano//zmk` 组合；
-3. BLE Know-How 视频改为解释真实硬件栈，不再把 CI 误生成的 MCU 当成产品设计的一部分；
-4. Windows 本地构建默认目标仍为 `nice_nano_v2`。
-
-工程结论：连接器兼容不等于 MCU 兼容。对使用 SoC 专有 DeviceTree 宏和外设的 shield，CI 构建目标必须显式收敛到实际支持的控制器。
 
 ## 2026-07-19：500 Hz 目标完成
 
