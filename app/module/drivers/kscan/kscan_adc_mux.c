@@ -88,7 +88,8 @@ static int kscan_adc_mux_set_address(const struct device *dev, uint8_t address) 
     return 0;
 }
 
-static int kscan_adc_mux_read_channel(const struct device *dev, uint8_t channel, int32_t *sample_mv) {
+static int kscan_adc_mux_read_channel(const struct device *dev, uint8_t channel,
+                                      int32_t *sample_mv) {
     const struct kscan_adc_mux_config *config = dev->config;
     struct kscan_adc_mux_data *data = dev->data;
 
