@@ -14,6 +14,8 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
 
+#include <zmk/debounce.h>
+
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #define INST_ADC_INPUTS(n) DT_INST_PROP_LEN(n, io_channels)
@@ -34,6 +36,7 @@ struct kscan_adc_mux_config {
     int32_t press_threshold_mv;
     int32_t release_threshold_mv;
     bool press_is_greater;
+    struct zmk_debounce_config debounce_config;
 };
 
 struct kscan_adc_mux_data {
@@ -43,8 +46,19 @@ struct kscan_adc_mux_data {
     struct adc_sequence *seqs;
     uint16_t *samples;
     bool *matrix_state;
+    struct zmk_debounce_state *debounce_state;
 };
 
+/* Raw, instantaneous threshold comparison for a single ADC sample. This is
+ * intentionally noisy right around the flip point: Hall sensor output can
+ * hover a few millivolts wide there due to mechanical vibration, magnet
+ * wobble, and ADC quantization/noise. The result is fed into the
+ * zmk_debounce integrator below rather than being latched directly, so a
+ * handful of consecutive scans agreeing is required before the reported
+ * (debounced) state actually changes and a callback fires. Without that,
+ * a finger resting near the threshold can make the driver emit dozens of
+ * spurious press/release pairs per second, which is what was causing
+ * modifiers (Ctrl/Alt/GUI) to get stuck: see kscan_adc_mux_read() below. */
 static bool kscan_adc_mux_pressed(const struct kscan_adc_mux_config *config, bool was_pressed,
                                   int32_t sample_mv) {
     if (config->press_is_greater) {
@@ -115,15 +129,29 @@ static int kscan_adc_mux_read(const struct device *dev) {
             }
 
             uint16_t idx = (row * config->column_count) + col;
-            bool pressed = kscan_adc_mux_pressed(config, data->matrix_state[idx], sample_mv);
+            struct zmk_debounce_state *deb_state = &data->debounce_state[idx];
 
-            LOG_DBG("ADC mux r%u c%u sample=%d pressed=%d", row, col, sample_mv, pressed);
+            /* Instantaneous (possibly bouncy) threshold decision, based on
+             * the debounced/latched state from the previous scan so the
+             * hysteresis (press vs release threshold) still applies. */
+            bool raw_pressed =
+                kscan_adc_mux_pressed(config, zmk_debounce_is_pressed(deb_state), sample_mv);
 
-            if (pressed != data->matrix_state[idx]) {
-                data->matrix_state[idx] = pressed;
-                if (data->callback) {
-                    data->callback(dev, row, col, pressed);
-                }
+            zmk_debounce_update(deb_state, raw_pressed, config->polling_interval_ms,
+                                &config->debounce_config);
+
+            LOG_DBG("ADC mux r%u c%u sample=%d raw=%d debounced=%d", row, col, sample_mv,
+                    raw_pressed, zmk_debounce_is_pressed(deb_state));
+
+            if (!zmk_debounce_get_changed(deb_state)) {
+                continue;
+            }
+
+            bool pressed = zmk_debounce_is_pressed(deb_state);
+            data->matrix_state[idx] = pressed;
+
+            if (data->callback) {
+                data->callback(dev, row, col, pressed);
             }
         }
     }
@@ -157,10 +185,48 @@ static int kscan_adc_mux_enable(const struct device *dev) {
     return k_work_schedule(&data->work, K_NO_WAIT) < 0 ? -EIO : 0;
 }
 
+static void kscan_adc_mux_release_all(const struct device *dev) {
+    const struct kscan_adc_mux_config *config = dev->config;
+    struct kscan_adc_mux_data *data = dev->data;
+    uint16_t count = (uint16_t)config->channel_count * config->column_count;
+
+    /* Hall/ADC-threshold keys have no physical "open" state once scanning
+     * stops: whatever matrix_state[] last held keeps being what the host
+     * believes is pressed, because no further HID report will ever be sent
+     * to correct it. If a modifier such as Ctrl/Alt/GUI is mid-press right
+     * when USB/BLE is unplugged or the scan is disabled, the host is left
+     * with that modifier stuck down until the user physically presses and
+     * releases the real key again. Explicitly emit release callbacks for
+     * every position that is still marked pressed before we stop scanning,
+     * so ZMK's input pipeline always sees a clean press/release pair. */
+    for (uint16_t idx = 0; idx < count; idx++) {
+        /* Reset the debounce integrator too, so that after a disable/enable
+         * cycle (e.g. output switching or PM suspend/resume) we don't carry
+         * over a half-confirmed transition from before the scan stopped. */
+        data->debounce_state[idx] = (struct zmk_debounce_state){0};
+
+        if (!data->matrix_state[idx]) {
+            continue;
+        }
+
+        data->matrix_state[idx] = false;
+
+        if (data->callback) {
+            uint8_t row = idx / config->column_count;
+            uint8_t col = idx % config->column_count;
+
+            data->callback(dev, row, col, false);
+        }
+    }
+}
+
 static int kscan_adc_mux_disable(const struct device *dev) {
     struct kscan_adc_mux_data *data = dev->data;
+    int err = k_work_cancel_delayable(&data->work);
 
-    return k_work_cancel_delayable(&data->work) < 0 ? -EIO : 0;
+    kscan_adc_mux_release_all(dev);
+
+    return err < 0 ? -EIO : 0;
 }
 
 static int kscan_adc_mux_init(const struct device *dev) {
@@ -216,38 +282,51 @@ static const struct kscan_driver_api kscan_adc_mux_api = {
     .disable_callback = kscan_adc_mux_disable,
 };
 
-#define KSCAN_ADC_MUX_INIT(n)                                                                         \
-    static const struct gpio_dt_spec kscan_adc_mux_address_gpios_##n[] = {                            \
-        LISTIFY(INST_ADDRESS_GPIOS(n), GPIO_CFG_INIT, (, ), n)};                                      \
-                                                                                                      \
-    static const struct adc_dt_spec kscan_adc_mux_channels_##n[] = {                                  \
-        LISTIFY(INST_ADC_INPUTS(n), ADC_CFG_INIT, (, ), n)};                                         \
-                                                                                                      \
-    static struct adc_sequence kscan_adc_mux_seqs_##n[INST_ADC_INPUTS(n)];                            \
-    static uint16_t kscan_adc_mux_samples_##n[INST_ADC_INPUTS(n)];                                    \
-    static bool kscan_adc_mux_matrix_state_##n[INST_ADC_INPUTS(n) * INST_COLUMNS(n)];                 \
-                                                                                                      \
-    static struct kscan_adc_mux_data kscan_adc_mux_data_##n = {                                       \
-        .seqs = kscan_adc_mux_seqs_##n,                                                              \
-        .samples = kscan_adc_mux_samples_##n,                                                        \
-        .matrix_state = kscan_adc_mux_matrix_state_##n,                                              \
-    };                                                                                                \
-                                                                                                      \
-    static const struct kscan_adc_mux_config kscan_adc_mux_config_##n = {                             \
-        .address_gpios = kscan_adc_mux_address_gpios_##n,                                            \
-        .channels = kscan_adc_mux_channels_##n,                                                       \
-        .address_gpio_count = INST_ADDRESS_GPIOS(n),                                                  \
-        .channel_count = INST_ADC_INPUTS(n),                                                         \
-        .column_count = INST_COLUMNS(n),                                                             \
-        .polling_interval_ms = DT_INST_PROP(n, polling_interval_ms),                                  \
-        .settle_time_us = DT_INST_PROP(n, settle_time_us),                                           \
-        .press_threshold_mv = DT_INST_PROP(n, press_threshold_mv),                                    \
-        .release_threshold_mv = DT_INST_PROP(n, release_threshold_mv),                                \
-        .press_is_greater = DT_INST_PROP(n, press_is_greater),                                       \
-    };                                                                                                \
-                                                                                                      \
-    DEVICE_DT_INST_DEFINE(n, &kscan_adc_mux_init, NULL, &kscan_adc_mux_data_##n,                      \
-                          &kscan_adc_mux_config_##n, POST_KERNEL, CONFIG_KSCAN_INIT_PRIORITY,         \
+#define KSCAN_ADC_MUX_INIT(n)                                                                      \
+    BUILD_ASSERT(DT_INST_PROP(n, debounce_press_ms) <= DEBOUNCE_COUNTER_MAX,                       \
+                 "debounce-press-ms is too large");                                                \
+    BUILD_ASSERT(DT_INST_PROP(n, debounce_release_ms) <= DEBOUNCE_COUNTER_MAX,                     \
+                 "debounce-release-ms is too large");                                              \
+                                                                                                   \
+    static const struct gpio_dt_spec kscan_adc_mux_address_gpios_##n[] = {                         \
+        LISTIFY(INST_ADDRESS_GPIOS(n), GPIO_CFG_INIT, (, ), n)};                                   \
+                                                                                                   \
+    static const struct adc_dt_spec kscan_adc_mux_channels_##n[] = {                               \
+        LISTIFY(INST_ADC_INPUTS(n), ADC_CFG_INIT, (, ), n)};                                       \
+                                                                                                   \
+    static struct adc_sequence kscan_adc_mux_seqs_##n[INST_ADC_INPUTS(n)];                         \
+    static uint16_t kscan_adc_mux_samples_##n[INST_ADC_INPUTS(n)];                                 \
+    static bool kscan_adc_mux_matrix_state_##n[INST_ADC_INPUTS(n) * INST_COLUMNS(n)];              \
+    static struct zmk_debounce_state                                                               \
+        kscan_adc_mux_debounce_state_##n[INST_ADC_INPUTS(n) * INST_COLUMNS(n)];                    \
+                                                                                                   \
+    static struct kscan_adc_mux_data kscan_adc_mux_data_##n = {                                    \
+        .seqs = kscan_adc_mux_seqs_##n,                                                            \
+        .samples = kscan_adc_mux_samples_##n,                                                      \
+        .matrix_state = kscan_adc_mux_matrix_state_##n,                                            \
+        .debounce_state = kscan_adc_mux_debounce_state_##n,                                        \
+    };                                                                                             \
+                                                                                                   \
+    static const struct kscan_adc_mux_config kscan_adc_mux_config_##n = {                          \
+        .address_gpios = kscan_adc_mux_address_gpios_##n,                                          \
+        .channels = kscan_adc_mux_channels_##n,                                                    \
+        .address_gpio_count = INST_ADDRESS_GPIOS(n),                                               \
+        .channel_count = INST_ADC_INPUTS(n),                                                       \
+        .column_count = INST_COLUMNS(n),                                                           \
+        .polling_interval_ms = DT_INST_PROP(n, polling_interval_ms),                               \
+        .settle_time_us = DT_INST_PROP(n, settle_time_us),                                         \
+        .press_threshold_mv = DT_INST_PROP(n, press_threshold_mv),                                 \
+        .release_threshold_mv = DT_INST_PROP(n, release_threshold_mv),                             \
+        .press_is_greater = DT_INST_PROP(n, press_is_greater),                                     \
+        .debounce_config =                                                                         \
+            {                                                                                      \
+                .debounce_press_ms = DT_INST_PROP(n, debounce_press_ms),                           \
+                .debounce_release_ms = DT_INST_PROP(n, debounce_release_ms),                       \
+            },                                                                                     \
+    };                                                                                             \
+                                                                                                   \
+    DEVICE_DT_INST_DEFINE(n, &kscan_adc_mux_init, NULL, &kscan_adc_mux_data_##n,                   \
+                          &kscan_adc_mux_config_##n, POST_KERNEL, CONFIG_KSCAN_INIT_PRIORITY,      \
                           &kscan_adc_mux_api);
 
 DT_INST_FOREACH_STATUS_OKAY(KSCAN_ADC_MUX_INIT)

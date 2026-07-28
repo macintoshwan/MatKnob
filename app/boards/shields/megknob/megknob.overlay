@@ -42,6 +42,16 @@
         settle-time-us = <20>;
         press-threshold-mv = <1000>;
         release-threshold-mv = <1300>;
+        /* Require ~3 consecutive 5ms scans (15ms) agreeing before latching a
+         * transition. Hall output can hover right at the press/release
+         * threshold (mechanical vibration, magnet wobble, ADC noise) even
+         * while the finger is holding perfectly still; without this the
+         * driver used to emit a burst of spurious press/release pairs at
+         * scan rate whenever that happened, which could desync ZMK's
+         * modifier reference counting and leave Ctrl/Alt/GUI stuck down on
+         * the host with no USB/BLE disconnect involved. */
+        debounce-press-ms = <15>;
+        debounce-release-ms = <15>;
     };
 
     kscan_wheel: kscan_wheel {

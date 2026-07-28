@@ -256,7 +256,21 @@ static void zmk_physical_layout_input_event_cb(struct input_event *evt, void *us
     }
 
     if (evt->sync) {
-        k_msgq_put(&physical_layouts_kscan_msgq, &pending_input_event, K_NO_WAIT);
+        /* K_NO_WAIT is required here: this callback can run from an ISR for
+         * interrupt-driven kscan drivers, where blocking is not allowed. If
+         * the (small, fixed-size) queue is ever full, the event is dropped
+         * rather than risking a deadlock/panic. A dropped state-changed event
+         * can desync press/release pairs downstream (e.g. a stuck modifier),
+         * so log loudly if this ever happens instead of failing silently;
+         * seeing this in the log means the queue needs to be sized up or the
+         * producer (kscan driver) is emitting events faster than intended
+         * (e.g. debounce/noise issues) and should be fixed at the source. */
+        int err = k_msgq_put(&physical_layouts_kscan_msgq, &pending_input_event, K_NO_WAIT);
+        if (err) {
+            LOG_ERR("Dropped kscan input event (row %d col %d state %d): queue full (%d)",
+                    pending_input_event.row, pending_input_event.column, pending_input_event.state,
+                    err);
+        }
         k_work_submit(&msg_processor.work);
     }
 }
@@ -274,7 +288,16 @@ static void zmk_physical_layout_kscan_callback(const struct device *dev, uint32_
         .column = column,
         .state = (pressed ? ZMK_KSCAN_EVENT_STATE_PRESSED : ZMK_KSCAN_EVENT_STATE_RELEASED)};
 
-    k_msgq_put(&physical_layouts_kscan_msgq, &ev, K_NO_WAIT);
+    /* See the comment in zmk_physical_layout_input_event_cb() above: K_NO_WAIT
+     * is required for ISR-safety, but a dropped event here can leave a
+     * modifier or other key "stuck" from the host's point of view because its
+     * matching press/release never arrives. Surface it loudly so it's
+     * diagnosable instead of silently eating events. */
+    int err = k_msgq_put(&physical_layouts_kscan_msgq, &ev, K_NO_WAIT);
+    if (err) {
+        LOG_ERR("Dropped kscan event (row %d col %d state %d): queue full (%d)", row, column,
+                ev.state, err);
+    }
     k_work_submit(&msg_processor.work);
 }
 

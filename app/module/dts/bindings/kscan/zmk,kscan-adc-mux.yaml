@@ -37,3 +37,20 @@ properties:
   press-is-greater:
     type: boolean
     description: Treat voltages greater than the press threshold as pressed.
+
+  debounce-press-ms:
+    type: int
+    default: 5
+    description: >
+      Debounce time for key press in milliseconds. Because analog Hall
+      readings can hover right at the press/release threshold (bounce/noise
+      near the flip point), each channel must report the same instantaneous
+      state for this many milliseconds of consecutive scans before the press
+      is latched and forwarded to the callback.
+
+  debounce-release-ms:
+    type: int
+    default: 5
+    description: >
+      Debounce time for key release in milliseconds, using the same
+      consecutive-scan confirmation algorithm as debounce-press-ms.

@@ -40,7 +40,7 @@
 - **USB HID / BLE HID 均已开启并可用**：`CONFIG_ZMK_USB=y`、`CONFIG_ZMK_BLE=y`、`CONFIG_BT=y`，阶段 2、阶段 4 的目标已经在实机上验证，RGB underglow 灯效可正常闪烁，BLE 能稳定配对连接（见 2026-07-23 相关日志）；
 - **`megknob.keymap` 已不是全 `&none`**：当前为单层 keymap，包含全部字母/修饰键位与 3 个 RGB 控制绑定；蓝牙 profile 切换、输出切换、多层功能等仍未回归，属于阶段 6 未完成部分；
 - **Hall 按键矩阵映射错误已修正**（`33fdd7a2`）：`MEG_MAPPING.md` 记录的 RC↔MEG↔4051 通道对照表已经和固件 `megknob_transform` 对齐，实测不再串键；
-- **新发现且尚未修复的问题**：断电/断连时 `kscan_adc_mux_disable()` 不清空按键状态，Ctrl/Alt/Win 等 Hall 轴 modifier 可能残留为“按下”，需要用户手动按键才能让主机恢复正常（详见 2026-07-27 日志与阶段 6 新增工作项）；
+- **modifier 卡键问题已定位真正根因并修复**：最初怀疑是断电/断连时 `kscan_adc_mux_disable()` 不清空按键状态导致（已修复），但实测反馈**不拔 USB 电源时也会卡键**，说明断连只是其中一个次要触发路径，真正的主因是 Hall 轴阈值判断**完全没有消抖**，导致电压在阈值附近抖动时以扫描速率（5ms）连续产生 press/release 事件，叠加 kscan 事件队列 `k_msgq_put(K_NO_WAIT)` 满了会静默丢事件，最终让 ZMK 的 modifier 引用计数错位、卡在“按下”。已接入 ZMK 官方 `zmk_debounce` 库为 `kscan_adc_mux` 增加连续确认消抖，并给丢事件路径加上日志与更大的队列余量（详见 2026-07-28 日志与阶段 6 更新）；
 - **滚轮仍是原始 1×3 GPIO 矩阵**，A/B 两相未迁移到正交编码器，阶段 1 尚未开始；
 - **网页上位机、OLED、电量与深度睡眠**（阶段 5、7、8）均未开始。
 
@@ -257,6 +257,10 @@
 - `MEG_MAPPING.md` 的 RC 映射错位已修正（`33fdd7a2`），实测按键映射正确、不再串键，工作内容第 1 项已完成；
 - 新发现风险：断电/断连时 `kscan_adc_mux_disable()` 不会清空 `matrix_state[]`，也不会补发释放事件，导致 Ctrl/Alt/Win 等 Hall 轴 modifier 可能残留为“按下”状态，主机需要用户手动按键才能恢复。这属于工作内容第 6 项（“USB 与 BLE 切换期间不会残留 modifier”）尚未覆盖到的场景——之前验证的是**输出切换**，这次暴露的是**断电/断连**，两者触发路径不同，需要分别验证和修复。详见开发日志 2026-07-27 条目。
 
+**进度更新（2026-07-28）**
+
+- **上面 07-27 的“断连导致卡键”只是次要诱因，不是主因**：实测反馈不拔 USB 电源、设备全程保持连接的情况下，modifier 依然会卡住。重新定位后发现真正根因是 `kscan_adc_mux` 的阈值判断完全没有消抖，Hall 轴电压在按下/释放阈值附近（1000 mV / 1300 mV）哪怕只是轻微抖动，也会以 5 ms 扫描速率连续产生 press/release 事件；这批高频事件经过 `physical_layouts.c` 里容量仅为 4 的 `k_msgq_put(..., K_NO_WAIT)` 事件队列时，一旦队列打满就会**静默丢事件**（`K_NO_WAIT` 失败直接吞掉，没有任何日志），导致某次 release 丢失而对应的 press 被处理，让 `zmk_hid_register_mod`/`unregister_mod` 的引用计数失衡，modifier 就此卡在“按下”状态。详见开发日志 2026-07-28 条目，工作内容第 7/8 项已完成，新增第 9/10 项。
+
 **工作内容**
 
 1. 按 `MEG_MAPPING.md` 恢复全部确认存在的磁轴键；
@@ -265,8 +269,10 @@
 4. 检查物理布局目前只有 MEG0–MEG18 的实际映射，不把 24 个采样槽位误当成 24 个都已安装的按键；
 5. 做逐键 pressed/released 日志，核对矩阵位置、键帽标识和发送键码；
 6. 验证 USB 与 BLE 切换期间不会残留 modifier 或卡住普通键；
-7. **（新增）修复 `kscan_adc_mux_disable()`，在停止扫描前对所有仍处于按下状态的位置补发一次释放回调**，避免断电/断连场景下 modifier 卡在“按下”状态；
-8. **（新增）评估在连接状态变化（USB 拔出、BLE 断开）时主动触发一次全键释放**，覆盖“设备未被显式 disable，但连接已经断开”的场景，不能只依赖 `kscan disable` 路径。
+7. **（已完成）修复 `kscan_adc_mux_disable()`，在停止扫描前对所有仍处于按下状态的位置补发一次释放回调**，避免断电/断连场景下 modifier 卡在“按下”状态；
+8. **（已完成，2026-07-28）为 `kscan_adc_mux` 接入 `zmk_debounce` 连续确认消抖**（`debounce-press-ms`/`debounce-release-ms`，默认 15 ms ≈ 3 次扫描确认），从源头抑制阈值附近的高频抖动误触发；
+9. **（新增，2026-07-28）给 `physical_layouts.c` 的 kscan 事件队列丢弃路径加日志**，并把 `megknob` 的 `CONFIG_ZMK_KSCAN_EVENT_QUEUE_SIZE` 从默认 4 提到 16，作为消抖之外的第二道防线；
+10. **（新增）评估在连接状态变化（USB 拔出、BLE 断开）时主动触发一次全键释放**，覆盖“设备未被显式 disable，但连接已经断开”的场景，不能只依赖 `kscan disable` 路径（`kscan_adc_mux_disable` 路径已覆盖，连接状态变化路径仍待实现）。
 
 **验收标准**
 
@@ -274,7 +280,9 @@
 - 每个 modifier 与多键组合正确；
 - 输出切换前主动释放旧端点的按键状态；
 - 位置 19 不再触发 viewer mode 冲突；
-- **（新增）按住 Ctrl/Alt/Win 或任意组合键时直接拔电/断连，重新连接后主机不残留任何 modifier 或按键状态，无需手动按键“复位”**。
+- 按住 Ctrl/Alt/Win 或任意组合键时直接拔电/断连，重新连接后主机不残留任何 modifier 或按键状态，无需手动按键“复位”；
+- **（新增）设备全程保持 USB/BLE 连接、不断电不断连的情况下，长时间正常使用（含手指在按键临界行程附近停留、快速连击、多键同时按住）不出现 modifier 或普通键卡住**；
+- **（新增）`CONFIG_ZMK_LOG_LEVEL` 调到 DBG 时观察不到 kscan 事件队列丢弃的 `LOG_ERR`**，作为消抖参数是否足够、队列容量是否足够的量化验收手段。
 
 ### 阶段 7：点亮并集成 0.91 寸 128×32 OLED
 
@@ -412,6 +420,89 @@
 ---
 
 # 开发日志（倒序）
+
+## 2026-07-28：modifier 卡键真正根因是抖动误触发 + 事件队列丢包，与断连无关（Know-How）
+
+### 用户反馈纠正了之前的假设
+
+2026-07-27 的分析把 modifier 卡键完全归因于“断电/断连时 `kscan_adc_mux_disable()` 不清空按键状态”。修复合入后，用户反馈：**不拔 USB 电源、设备全程保持连接的情况下，同样会出现卡键**。这说明断连只是可能触发卡键的场景之一，而不是根因——真正的问题一定出在“扫描仍在正常运行”这条主路径上。
+
+### 根因定位
+
+问题出在两处叠加：`kscan_adc_mux` 驱动没有消抖，加上 `physical_layouts.c` 的事件队列会静默丢事件。
+
+**1. `kscan_adc_mux_pressed()` 的阈值判断完全没有消抖**
+
+```48:57:app/module/drivers/kscan/kscan_adc_mux.c
+static bool kscan_adc_mux_pressed(const struct kscan_adc_mux_config *config, bool was_pressed,
+                                  int32_t sample_mv) {
+    if (config->press_is_greater) {
+        return was_pressed ? sample_mv > config->release_threshold_mv
+                           : sample_mv > config->press_threshold_mv;
+    }
+
+    return was_pressed ? sample_mv < config->release_threshold_mv
+                       : sample_mv < config->press_threshold_mv;
+}
+```
+
+`megknob.overlay` 配置 `press-threshold-mv = 1000`、`release-threshold-mv = 1300`，`polling-interval-ms = 5`，即每 5 ms 完整扫描一次全部 24 个通道，采样值一旦跨过阈值就立刻触发回调，**没有连续 N 次确认**的消抖逻辑。值得注意的是，路线图“当前起点”一节记录的历史阈值是“连续 3 次扫描确认”，说明这个消抖机制在某次重写/回退中被丢失了，而不是从来没有过。
+
+Hall 轴电压在按下/释放阈值附近，哪怕手指静止不动，也会因为机械微振动、磁体轻微晃动、ADC 量化噪声等原因在阈值两侧反复穿越。一旦发生，驱动会以 5 ms 扫描速率连续产生 press/release 交替事件，而不是一次干净的按下。
+
+**2. `physical_layouts.c` 的 kscan 事件队列会静默丢事件**
+
+```266:279:app/src/physical_layouts.c（修复前）
+static void zmk_physical_layout_kscan_callback(const struct device *dev, uint32_t row,
+                                               uint32_t column, bool pressed) {
+    if (dev != active->kscan) {
+        return;
+    }
+
+    struct zmk_kscan_event ev = { ... };
+
+    k_msgq_put(&physical_layouts_kscan_msgq, &ev, K_NO_WAIT);
+    k_work_submit(&msg_processor.work);
+}
+```
+
+`physical_layouts_kscan_msgq` 容量由 `CONFIG_ZMK_KSCAN_EVENT_QUEUE_SIZE` 决定，默认只有 **4**。`k_msgq_put(..., K_NO_WAIT)` 在队列满时会直接返回错误、事件被丢弃，且原代码完全不检查返回值，没有任何日志。
+
+**3. 两者叠加导致 modifier 引用计数永久失衡**
+
+`app/src/hid.c` 里 modifier 的按下/释放是带引用计数的（`explicit_modifier_counts[8]`）：
+
+```53:76:app/src/hid.c
+int zmk_hid_register_mod(zmk_mod_t modifier) {
+    explicit_modifier_counts[modifier]++;
+    ...
+}
+
+int zmk_hid_unregister_mod(zmk_mod_t modifier) {
+    if (explicit_modifier_counts[modifier] <= 0) {
+        LOG_ERR("Tried to unregister modifier %d too often", modifier);
+        return -EINVAL;
+    }
+    explicit_modifier_counts[modifier]--;
+    ...
+}
+```
+
+如果某个 modifier（如 Ctrl）对应的 Hall 通道在阈值附近抖动，短时间内产生的 press/release 事件数超过队列的 4 个槽位，一旦某次 **release 事件被挤掉、而对应的 press 事件被处理**，计数就会多加 1 且没有人再减它，`explicit_modifiers` 对应 bit 永远不会被清零——表现为 Ctrl/Alt/Win 卡在“按下”状态，且与 USB/BLE 是否断开完全无关，这与用户的实际观察完全吻合。
+
+### 修复
+
+1. **`kscan_adc_mux.c` 接入 ZMK 官方 `zmk_debounce` 库**（`app/module/lib/zmk_debounce`，与 `kscan_gpio_matrix`/`kscan_gpio_direct` 等驱动使用同一套“连续确认”消抖算法），把瞬时阈值判断结果喂给 `zmk_debounce_update()`，只有确认状态真的翻转（`zmk_debounce_get_changed()`）才触发回调，从源头抑制阈值附近的高频抖动误触发；
+2. 新增 devicetree 属性 `debounce-press-ms`/`debounce-release-ms`（默认 5ms，`megknob.overlay` 显式设为 **15ms** ≈ 3 次扫描确认），Kconfig 里 `ZMK_KSCAN_ADC_MUX` 增加 `select ZMK_DEBOUNCE`；
+3. `kscan_adc_mux_release_all()`（断连/disable 时补发释放事件）同步清空消抖状态，避免 disable/enable 循环后残留半确认的过渡状态；
+4. `physical_layouts.c` 里两处 `k_msgq_put(..., K_NO_WAIT)` 改为检查返回值并在丢事件时打印 `LOG_ERR`，把原本的静默失败变成可诊断的日志；`K_NO_WAIT` 本身保留不改，因为这个回调在某些 kscan 驱动下可能来自中断上下文，不能阻塞；
+5. `megknob.conf` 把 `CONFIG_ZMK_KSCAN_EVENT_QUEUE_SIZE` 从默认 4 调到 **16**，作为消抖之外的第二道安全边际，应对滚轮+按键同时动作等突发多事件场景。
+
+### 影响范围与验证方式
+
+- 修复只影响 `kscan_adc_mux` 驱动本身和 `megknob` shield 的配置，`zmk,kscan-adc-mux` 目前只有 `megknob` 一个使用方，不影响其它 board/shield；
+- 本地没有 west/Zephyr SDK/Docker 工具链，无法本地交叉编译验证，已完成的静态验证包括：clang-format 格式检查（`.clang-format` 规则）、`zmk/debounce.h` 的 include 路径与 `CONFIG_ZMK_DEBOUNCE` 的 CMake/Kconfig 链接路径逐项对照官方 `kscan_gpio_matrix.c`/`kscan_gpio_direct.c` 的用法确认一致；实际编译结果依赖 push 后的 GitHub Actions CI（`zmkfirmware/zmk-build-arm:4.1` 容器）；
+- 验收时建议开 `CONFIG_ZMK_LOG_LEVEL=DBG`，重点关注：（1）新增的 kscan 事件队列丢弃 `LOG_ERR` 是否还会出现；（2）手指停在按键临界行程附近时是否还会看到连续的 press/release 抖动日志；（3）长时间正常使用（不断电不断连）是否还会复现 modifier 卡键。
 
 ## 2026-07-27：断连/断电后 Ctrl、Alt、Win 卡键问题分析（Know-How）
 
