@@ -13,6 +13,12 @@
         zmk,kscan = &kscan0;
         zmk,physical-layout = &megknob_layout;
         zmk,underglow = &led_strip;
+        /* Dedicated USB CDC ACM virtual serial port for Hall voltage
+         * telemetry (see app/module/lib/hall_telemetry), separate and
+         * independent from HID/BLE. Enabling
+         * this only turns on the telemetry *link*; the actual Kconfig
+         * (CONFIG_HALL_TELEMETRY) still has to be enabled in megknob.conf. */
+        zmk,hall-telemetry-uart = &hall_telemetry_uart;
     };
 
     kscan0: kscan {
@@ -28,6 +34,35 @@
             kscan = <&kscan_wheel>;
             row-offset = <3>;
         };
+    };
+
+    /* Wheel rotation quadrature encoder. The wheel's A/B phases (P0.11,
+     * P0.24 against the common P1.11) used to be wired into kscan_wheel as
+     * two independent matrix keys, which is electrically wrong for a
+     * mechanical encoder: both phases toggle on every detent, so a single
+     * rotation in either direction produced two key events instead of one
+     * directional step. alps,ec11 decodes the canonical
+     * 00 -> 01 -> 11 -> 10 (or reverse) gray-code sequence and reports a
+     * single signed delta per detent instead.
+     *
+     * steps/triggers-per-rotation below are carried over from the previous
+     * per-phase GPIO wiring as a starting point and have not been verified
+     * against the physical encoder's pulses-per-rotation with a logic
+     * analyzer; recheck direction and step count on real hardware before
+     * relying on them for anything other than "does turning produce
+     * same-signed deltas in one direction". */
+    wheel_encoder: wheel_encoder {
+        compatible = "alps,ec11";
+        status = "okay";
+        a-gpios = <&gpio0 11 GPIO_ACTIVE_HIGH>;
+        b-gpios = <&gpio0 24 GPIO_ACTIVE_HIGH>;
+        steps = <80>;
+    };
+
+    sensors: sensors {
+        compatible = "zmk,keymap-sensors";
+        sensors = <&wheel_encoder>;
+        triggers-per-rotation = <20>;
     };
 
     kscan_adc_mux: kscan_adc_mux {
@@ -54,6 +89,9 @@
         debounce-release-ms = <15>;
     };
 
+    /* Wheel push only. The A/B rotation phases that used to live in
+     * columns 1/2 here have moved to wheel_encoder above; this now only
+     * scans the physical push button on P1.00 against the common P1.11. */
     kscan_wheel: kscan_wheel {
         compatible = "zmk,kscan-gpio-matrix";
         wakeup-source;
@@ -61,12 +99,13 @@
         debounce-release-ms = <10>;
         diode-direction = "col2row";
         row-gpios = <&gpio1 11 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
-        col-gpios
-            = <&gpio1 0 GPIO_ACTIVE_HIGH>
-            , <&gpio0 11 GPIO_ACTIVE_HIGH>
-            , <&gpio0 24 GPIO_ACTIVE_HIGH>;
+        col-gpios = <&gpio1 0 GPIO_ACTIVE_HIGH>;
     };
 
+    /* Only 20 physical keys now: the wheel's two rotation phases (formerly
+     * the last two entries here, RC(3,1)/RC(3,2)) are no longer matrix
+     * positions -- they are decoded by wheel_encoder/sensors above and
+     * bound in the keymap via sensor-bindings instead of key bindings. */
     megknob_layout: physical_layout_0 {
         compatible = "zmk,physical-layout";
         display-name = "MegKnob";
@@ -90,9 +129,7 @@
             , <&key_physical_attrs 100 100 700 300 0 0 0>
             , <&key_physical_attrs 100 100 800 300 0 0 0>
             , <&key_physical_attrs 100 100 900 300 0 0 0>
-            , <&key_physical_attrs 100 100   0 400 0 0 0>
-            , <&key_physical_attrs 100 100 100 400 0 0 0>
-            , <&key_physical_attrs 100 100 200 400 0 0 0>;
+            , <&key_physical_attrs 100 100   0 400 0 0 0>;
         transform = <&megknob_transform>;
     };
 
@@ -105,7 +142,7 @@
             RC(2,1) RC(2,6) RC(1,1) RC(1,6) RC(0,6)
             RC(2,0) RC(2,7) RC(1,0) RC(1,7)
             RC(2,3) RC(2,5) RC(1,3) RC(1,5) RC(0,7)
-            RC(3,0) RC(3,1) RC(3,2)
+            RC(3,0)
         >;
     };
 };
@@ -140,6 +177,12 @@
         zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
         zephyr,input-positive = <NRF_SAADC_AIN7>;
         zephyr,resolution = <12>;
+    };
+};
+
+&zephyr_udc0 {
+    hall_telemetry_uart: hall_telemetry_uart {
+        compatible = "zephyr,cdc-acm-uart";
     };
 };
 

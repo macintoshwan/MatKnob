@@ -37,13 +37,17 @@
 | ALT | MEG18 | U27 | Y5 | ADC2 / P0.29 | RC(1,5) | |
 | SPACE | MEG14 | U26 | Y7 | ADC3 / P0.31 | RC(0,7) | |
 
-## 当前滚轮映射
+## 当前滚轮映射（2026-07-29 起：旋转已迁移为正交编码器）
 
-| 功能 | GPIO矩阵位置 | 物理连接 | 当前绑定 | 手动更正 |
+滚轮按下仍然是矩阵按键；旋转不再是两个矩阵按键，而是由 `wheel_encoder`（`compatible = "alps,ec11"`）解码为一个带方向的 sensor，通过 keymap 的 `sensor-bindings` 绑定行为。旧的"两个独立按键"模型是错误的：机械编码器每次转动 A/B 两相都会先后翻转，当成两个按键处理时一次旋转必然同时触发两个方向的事件。
+
+| 功能 | 矩阵/传感器位置 | 物理连接 | 当前绑定 | 手动更正 |
 |---|---|---|---|---|
 | 滚轮按下 | RC(3,0) | COL0 P1.00 -- ROW1 P1.11 | RGB_TOG | |
-| 滚轮顺/逆时针一路 | RC(3,1) | COL1 P0.11 -- ROW1 P1.11 | RGB_EFF | |
-| 滚轮顺/逆时针另一路 | RC(3,2) | COL2 P0.24 -- ROW1 P1.11 | RGB_BRI | |
+| 滚轮旋转（A 相） | `wheel_encoder` a-gpios | P0.11 | `sensor-bindings`：`&inc_dec_kp C_VOL_UP C_VOL_DN` | 方向未经实测确认，如反向请交换 `inc_dec_kp` 的两个参数 |
+| 滚轮旋转（B 相） | `wheel_encoder` b-gpios | P0.24 | 同上（A/B 两相共同解码为一个方向性 delta，不再单独绑定） | |
+
+`steps = <80>`、`triggers-per-rotation = <20>` 沿用之前 GPIO 矩阵阶段的经验值，尚未用逻辑分析仪对实际编码器的每圈脉冲数做过验证，后续如发现步进变慢/变快或漏步，需要现场测量后调整这两个参数。
 
 ## 按 MEG 编号排序的 4051 通道表
 
@@ -71,14 +75,14 @@
 
 ## 当前 transform 顺序
 
-当前 `megknob_transform` 的顺序等同于下面这个序列，keymap 的 binding 会按这个顺序一一对应：
+当前 `megknob_transform` 的顺序等同于下面这个序列，keymap 的 `bindings` 会按这个顺序一一对应（20 项，`WHEEL_A`/`WHEEL_B` 不再是矩阵位置，见上一节）：
 
 ```text
 MEG0, MEG1, MEG2, MEG3, MEG4,
 MEG5, MEG6, MEG7, MEG8, MEG9,
 MEG10, MEG11, MEG12, MEG13,
 MEG15, MEG16, MEG17, MEG18, MEG14,
-WHEEL_PRESS, WHEEL_A, WHEEL_B
+WHEEL_PRESS
 ```
 
-注意：这里 `MEG14` 当前放在 SPACE 位置，所以顺序上在 `MEG18` 后面。
+注意：这里 `MEG14` 当前放在 SPACE 位置，所以顺序上在 `MEG18` 后面。滚轮旋转单独走 `sensor-bindings`，不占用这个矩阵序列。

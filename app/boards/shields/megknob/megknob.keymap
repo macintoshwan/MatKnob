@@ -10,13 +10,26 @@
     keymap {
         compatible = "zmk,keymap";
         default_layer {
+            /* 20 matrix key bindings (wheel push is the last one, RGB_TOG)
+             * plus one sensor-bindings entry for the wheel_encoder defined
+             * in megknob.overlay. The encoder's two GPIO phases used to be
+             * two extra matrix key bindings here (RGB_EFF/RGB_BRI on
+             * RC(3,1)/RC(3,2)); those positions no longer exist now that
+             * rotation is decoded as a proper quadrature encoder instead of
+             * two independent keys.
+             *
+             * Volume up/down is a placeholder default binding to make the
+             * encoder immediately useful; direction (which way is "clockwise")
+             * has not been verified against the physical wheel yet -- swap the
+             * two inc_dec_kp arguments if rotation comes out reversed. */
             bindings = <
                 &kp TAB   &kp Q      &kp W     &kp E    &kp R
                 &kp CAPS  &kp A      &kp S     &kp D    &kp F
                 &kp LSHFT &kp Z      &kp X     &kp C
                 &kp BSPC  &kp LCTRL  &kp LGUI  &kp LALT &kp SPACE
-                &rgb_ug RGB_TOG  &rgb_ug RGB_EFF  &rgb_ug RGB_BRI
+                &rgb_ug RGB_TOG
             >;
+            sensor-bindings = <&inc_dec_kp C_VOL_UP C_VOL_DN>;
         };
     };
 };

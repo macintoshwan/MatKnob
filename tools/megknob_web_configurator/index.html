@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MegKnob Web Configurator</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #101215;
+    --panel: #171a1f;
+    --border: #343942;
+    --text: #d9dde3;
+    --muted: #9da5b2;
+    --accent: #ffd000;
+    --danger: #ff5a5a;
+    --ok: #57e389;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", "PingFang SC", sans-serif;
+    font-size: 14px;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  header .brand {
+    color: var(--accent);
+    font-weight: 700;
+    letter-spacing: 2px;
+    font-size: 16px;
+    margin-right: 8px;
+  }
+  button, select {
+    background: #242830;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 4px;
+    padding: 7px 12px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button:hover:not(:disabled), select:hover { border-color: var(--accent); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.primary { background: #5b4900; border-color: var(--accent); color: var(--accent); }
+  .status-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--danger); display: inline-block; margin-right: 6px;
+  }
+  .status-dot.connected { background: var(--ok); }
+  .status-text { color: var(--muted); }
+  main {
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    gap: 12px;
+    padding: 12px;
+    height: calc(100vh - 58px);
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    overflow: auto;
+  }
+  #plot-panel { display: flex; flex-direction: column; }
+  #wave-canvas { width: 100%; flex: 1; min-height: 300px; background: #0b0d10; border-radius: 4px; }
+  .metrics-bar {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 8px;
+    margin-top: 10px;
+    font-size: 12px;
+  }
+  .metric {
+    background: #0b0d10;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 8px;
+  }
+  .metric .label { color: var(--muted); display: block; font-size: 11px; }
+  .metric .value { color: var(--text); font-weight: 600; font-size: 14px; }
+  .metric .value.warn { color: var(--danger); }
+  #channel-list h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .channel-row {
+    display: grid;
+    grid-template-columns: 18px 1fr 52px 40px 40px;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 0;
+    font-size: 12px;
+    border-bottom: 1px solid #21252c;
+  }
+  .channel-row .swatch { width: 10px; height: 10px; border-radius: 2px; }
+  .channel-row .name { color: var(--text); }
+  .channel-row .val { text-align: right; font-variant-numeric: tabular-nums; }
+  .channel-row .minmax { text-align: right; color: var(--muted); font-size: 10px; }
+  .toolbar-group { display: flex; align-items: center; gap: 6px; }
+  .spacer { flex: 1; }
+  footer { padding: 8px 16px; color: var(--muted); font-size: 11px; border-top: 1px solid var(--border); }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">MEGKNOB · WEB CONFIGURATOR</span>
+
+  <div class="toolbar-group">
+    <span class="status-dot" id="status-dot"></span>
+    <span class="status-text" id="status-text">未连接</span>
+  </div>
+
+  <div class="toolbar-group">
+    <button id="btn-connect" class="primary">连接设备</button>
+    <button id="btn-disconnect" disabled>断开</button>
+  </div>
+
+  <div class="toolbar-group">
+    <label for="timebase">时基</label>
+    <select id="timebase">
+      <option value="2">2 s</option>
+      <option value="5" selected>5 s</option>
+      <option value="10">10 s</option>
+      <option value="20">20 s</option>
+    </select>
+  </div>
+
+  <div class="toolbar-group">
+    <label for="vrange">量程</label>
+    <select id="vrange">
+      <option value="2000">0-2.0 V</option>
+      <option value="2500">0-2.5 V</option>
+      <option value="3300" selected>0-3.3 V</option>
+    </select>
+  </div>
+
+  <button id="btn-clear">清屏</button>
+  <button id="btn-export">导出 CSV</button>
+
+  <div class="spacer"></div>
+  <span class="status-text">仅支持 Chrome / Edge（Web Serial）</span>
+</header>
+
+<main>
+  <div class="panel" id="plot-panel">
+    <canvas id="wave-canvas"></canvas>
+    <div class="metrics-bar" id="metrics-bar">
+      <div class="metric"><span class="label">设备扫描率</span><span class="value" id="m-scan-hz">-</span></div>
+      <div class="metric"><span class="label">主机接收帧率</span><span class="value" id="m-rx-hz">-</span></div>
+      <div class="metric"><span class="label">吞吐量</span><span class="value" id="m-throughput">-</span></div>
+      <div class="metric"><span class="label">序号丢帧</span><span class="value" id="m-lost">-</span></div>
+      <div class="metric"><span class="label">CRC 错误</span><span class="value" id="m-crc">-</span></div>
+      <div class="metric"><span class="label">固件/协议版本</span><span class="value" id="m-version">-</span></div>
+    </div>
+  </div>
+
+  <div class="panel" id="channel-list">
+    <h3>24 通道</h3>
+    <div id="channels"></div>
+  </div>
+</main>
+
+<footer>
+  协议 v3（62-byte 帧）· 只读实时波形 MVP，参数读写协议见路线图 Issue D（中期目标）
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -9,6 +9,8 @@
 !/tools/requirements-hall-viewer.txt
 !/tools/run_megknob_hall_viewer.bat
 !/tools/build_megknob_windows.bat
+!/tools/megknob_web_configurator/
+!/tools/megknob_web_configurator/**
 /zephyr
 /zmk-config
 /build

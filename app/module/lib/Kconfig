@@ -1,2 +1,3 @@
 
 rsource "zmk_debounce/Kconfig"
+rsource "hall_telemetry/Kconfig"

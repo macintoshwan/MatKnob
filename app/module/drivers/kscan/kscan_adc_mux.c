@@ -15,6 +15,7 @@
 #include <zephyr/sys/util.h>
 
 #include <zmk/debounce.h>
+#include <zmk/hall_telemetry.h>
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
@@ -116,6 +117,15 @@ static int kscan_adc_mux_read(const struct device *dev) {
     const struct kscan_adc_mux_config *config = dev->config;
     struct kscan_adc_mux_data *data = dev->data;
 
+    /* Collected for hall_telemetry_submit() below. Only meaningful when
+     * channel_count * column_count == HALL_TELEMETRY_CHANNELS (true for the
+     * MegKnob 3x8 layout); telemetry is a no-op build-time stub on any board
+     * that does not opt into CONFIG_HALL_TELEMETRY, so this stays harmless
+     * (just an unused stack array) everywhere else. */
+    int32_t telemetry_mv[HALL_TELEMETRY_CHANNELS];
+    bool telemetry_shape_matches =
+        ((uint16_t)config->channel_count * config->column_count) == HALL_TELEMETRY_CHANNELS;
+
     for (uint8_t col = 0; col < config->column_count; col++) {
         int err = kscan_adc_mux_set_address(dev, col);
         if (err) {
@@ -130,6 +140,11 @@ static int kscan_adc_mux_read(const struct device *dev) {
             }
 
             uint16_t idx = (row * config->column_count) + col;
+
+            if (telemetry_shape_matches) {
+                telemetry_mv[idx] = sample_mv;
+            }
+
             struct zmk_debounce_state *deb_state = &data->debounce_state[idx];
 
             /* Instantaneous (possibly bouncy) threshold decision, based on
@@ -155,6 +170,18 @@ static int kscan_adc_mux_read(const struct device *dev) {
                 data->callback(dev, row, col, pressed);
             }
         }
+    }
+
+    /* Telemetry is submitted last, after all 24 channels for this scan are
+     * known, and only ever pushes into a bounded queue with K_NO_WAIT (see
+     * hall_telemetry_submit()) -- it cannot block or slow down this scan
+     * loop, keeping HID/BLE-relevant timing unaffected by whether a USB
+     * telemetry host is attached. Mode is hardcoded to "all channels" (3);
+     * the wheel-press-cycles-viewer-mode behavior described in
+     * a future telemetry control protocol is not wired up to this simplified
+     * driver. */
+    if (telemetry_shape_matches) {
+        hall_telemetry_submit(3, telemetry_mv);
     }
 
     return 0;

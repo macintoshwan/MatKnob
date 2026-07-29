@@ -1,0 +1,48 @@
+# Copyright (c) 2026 The ZMK Contributors
+# SPDX-License-Identifier: MIT
+
+DT_CHOSEN_ZMK_HALL_TELEMETRY_UART := zmk,hall-telemetry-uart
+
+menuconfig HALL_TELEMETRY
+    bool "MegKnob Hall voltage telemetry over USB CDC ACM"
+    depends on $(dt_chosen_enabled,$(DT_CHOSEN_ZMK_HALL_TELEMETRY_UART))
+    select SERIAL
+    select USB_DEVICE_STACK
+    select USB_CDC_ACM
+    select UART_INTERRUPT_DRIVEN
+    help
+      Stream 24-channel Hall/ADC voltage samples out over a dedicated USB CDC
+      ACM virtual serial port, using the MegKnob protocol v3 wire format, so
+      a browser-based configurator or the existing tools/megknob_hall_viewer.py
+      can display
+      real-time waveforms.
+
+      This is intentionally decoupled from HID/BLE: producers (e.g. the
+      kscan_adc_mux driver) only ever push samples into a bounded queue with
+      K_NO_WAIT and never block; all USB I/O happens on a dedicated,
+      K_LOWEST_APPLICATION_THREAD_PRIO thread so a slow, absent, or
+      disconnected USB host cannot stall key scanning, HID reporting, or the
+      BLE stack. When the queue is full the oldest pending frame is dropped
+      instead of blocking the producer.
+
+if HALL_TELEMETRY
+
+config HALL_TELEMETRY_QUEUE_DEPTH
+    int "Pending telemetry frame queue depth"
+    default 4
+    range 2 32
+    help
+      Number of complete 62-byte frames that can be buffered waiting for USB
+      to drain. Kept small on purpose: telemetry is best-effort and should
+      never accumulate meaningful latency relative to the live signal.
+
+config HALL_TELEMETRY_PERF_FRAME_INTERVAL
+    int "Scans between performance frames"
+    default 256
+    range 16 4096
+    help
+      Emit one type=3 performance frame (scan/address/adc/process timing)
+      every N submitted data frames, matching the existing protocol v3
+      wire format and tools/megknob_hall_viewer.py's expectations.
+
+endif # HALL_TELEMETRY
