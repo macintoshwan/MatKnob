@@ -50,19 +50,29 @@
      * against the physical encoder's pulses-per-rotation with a logic
      * analyzer; recheck direction and step count on real hardware before
      * relying on them for anything other than "does turning produce
-     * same-signed deltas in one direction". */
+     * same-signed deltas in one direction".
+     *
+     * P1.11 is held high by the GPIO hog below. A/B therefore use pull-downs
+     * and become active-high when their encoder contact closes. Keeping the
+     * common at a fixed level is required because the EC11 driver samples A/B
+     * asynchronously; a matrix-scanned common would only be driven briefly
+     * while scanning the push switch. */
     wheel_encoder: wheel_encoder {
         compatible = "alps,ec11";
         status = "okay";
-        a-gpios = <&gpio0 11 GPIO_ACTIVE_HIGH>;
-        b-gpios = <&gpio0 24 GPIO_ACTIVE_HIGH>;
+        a-gpios = <&gpio0 11 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
+        b-gpios = <&gpio0 24 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
         steps = <80>;
     };
 
     sensors: sensors {
         compatible = "zmk,keymap-sensors";
         sensors = <&wheel_encoder>;
-        triggers-per-rotation = <20>;
+        /* The physical wheel has roughly twice as many detents as the
+         * original unverified 20-trigger estimate. Emit one volume event
+         * per half-quadrature cycle so a single mechanical detent responds
+         * instead of requiring two or more detents. */
+        triggers-per-rotation = <40>;
     };
 
     kscan_adc_mux: kscan_adc_mux {
@@ -89,17 +99,14 @@
         debounce-release-ms = <15>;
     };
 
-    /* Wheel push only. The A/B rotation phases that used to live in
-     * columns 1/2 here have moved to wheel_encoder above; this now only
-     * scans the physical push button on P1.00 against the common P1.11. */
+    /* Wheel push only. P1.11 is permanently high, so the push contact on
+     * P1.00 is now a direct active-high input with a pull-down. */
     kscan_wheel: kscan_wheel {
-        compatible = "zmk,kscan-gpio-matrix";
+        compatible = "zmk,kscan-gpio-direct";
         wakeup-source;
         debounce-press-ms = <10>;
         debounce-release-ms = <10>;
-        diode-direction = "col2row";
-        row-gpios = <&gpio1 11 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
-        col-gpios = <&gpio1 0 GPIO_ACTIVE_HIGH>;
+        input-gpios = <&gpio1 0 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
     };
 
     /* Only 20 physical keys now: the wheel's two rotation phases (formerly
@@ -144,6 +151,17 @@
             RC(2,3) RC(2,5) RC(1,3) RC(1,5) RC(0,7)
             RC(3,0)
         >;
+    };
+};
+
+/* EC11 A, B and push share this PCB net. Hold it high continuously so all
+ * three contacts have a stable reference independent of kscan timing. */
+&gpio1 {
+    wheel_common_high {
+        gpio-hog;
+        gpios = <11 GPIO_ACTIVE_HIGH>;
+        output-high;
+        line-name = "EC11 common";
     };
 };
 
