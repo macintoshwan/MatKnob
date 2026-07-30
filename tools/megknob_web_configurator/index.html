@@ -5,173 +5,302 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>MegKnob Web Configurator</title>
 <style>
+  /* ===== Theme variables ===== */
   :root {
-    color-scheme: dark;
-    --bg: #101215;
-    --panel: #171a1f;
-    --border: #343942;
-    --text: #d9dde3;
-    --muted: #9da5b2;
-    --accent: #ffd000;
-    --danger: #ff5a5a;
-    --ok: #57e389;
+    --font-family: -apple-system, "Segoe UI", "PingFang SC", sans-serif;
+    --font-weight: 400;
+    --font-weight-bold: 600;
   }
+  :root, [data-theme="vscode-dark"] {
+    --activity-bg: #333333; --sidebar-bg: #252526; --editor-bg: #1e1e1e;
+    --statusbar-bg: #007acc; --statusbar-text: #ffffff;
+    --border: #3c3c3c; --text: #cccccc; --text-muted: #858585;
+    --accent: #007fd4; --ok: #4ec9b0; --danger: #f48771; --warning: #cca700;
+    --input-bg: #3c3c3c; --grid: #2b2b2b; --canvas-bg: #181818;
+    --activity-icon: #858585; --activity-icon-active: #ffffff;
+    --statusbar-warn: #ffb3b3;
+    --track-bg: #3a3a3d; --cursor-color: #ffffff;
+  }
+  [data-theme="vscode-light"] {
+    --activity-bg: #2c2c2c; --sidebar-bg: #f3f3f3; --editor-bg: #ffffff;
+    --statusbar-bg: #007acc; --statusbar-text: #ffffff;
+    --border: #e0e0e0; --text: #333333; --text-muted: #6f6f6f;
+    --accent: #007fd4; --ok: #16825d; --danger: #e51400; --warning: #bf8803;
+    --input-bg: #ffffff; --grid: #e6e6e6; --canvas-bg: #fafafa;
+    --activity-icon: #aaaaaa; --activity-icon-active: #ffffff;
+    --statusbar-warn: #ffd7d7;
+    --track-bg: #d5d5d5; --cursor-color: #222222;
+  }
+  [data-theme="arduino"] {
+    --activity-bg: #00646a; --sidebar-bg: #f4f4f4; --editor-bg: #ffffff;
+    --statusbar-bg: #00979d; --statusbar-text: #ffffff;
+    --border: #d9d9d9; --text: #434343; --text-muted: #7a7a7a;
+    --accent: #00979d; --ok: #1b8a4c; --danger: #d33b3b; --warning: #c77d02;
+    --input-bg: #ffffff; --grid: #e9e9e9; --canvas-bg: #ffffff;
+    --activity-icon: #bfe6e8; --activity-icon-active: #ffffff;
+    --statusbar-warn: #ffe1e1;
+    --track-bg: #d8d8d8; --cursor-color: #2a2a2a;
+  }
+  [data-theme="cubemx"] {
+    --activity-bg: #03234b; --sidebar-bg: #f5f6f7; --editor-bg: #ffffff;
+    --statusbar-bg: #03234b; --statusbar-text: #ffffff;
+    --border: #d0d4d9; --text: #1f2d3d; --text-muted: #6b7684;
+    --accent: #0072c6; --ok: #1e9e50; --danger: #d13438; --warning: #ca5010;
+    --input-bg: #ffffff; --grid: #e7eaee; --canvas-bg: #ffffff;
+    --activity-icon: #9db6d6; --activity-icon-active: #ffffff;
+    --statusbar-warn: #ffc9c9;
+    --track-bg: #d0d4d9; --cursor-color: #1f2d3d;
+  }
+  [data-theme="eva"] {
+    --activity-bg: #1c1c1e; --sidebar-bg: #161617; --editor-bg: #0e0e10;
+    --statusbar-bg: #5b2a86; --statusbar-text: #e6ffd6;
+    --border: #2c2c30; --text: #dcdce0; --text-muted: #8e8e96;
+    --accent: #7cff00; --ok: #7cff00; --danger: #ff453a; --warning: #ff9f0a;
+    --input-bg: #1e1e22; --grid: #232327; --canvas-bg: #0a0a0c;
+    --activity-icon: #8e8e96; --activity-icon-active: #7cff00;
+    --statusbar-warn: #ffd60a;
+    --track-bg: #2c2c30; --cursor-color: #7cff00;
+    --font-family: "Songti SC", "STSong", "SimSun", "Noto Serif CJK SC", "Source Han Serif SC", serif;
+    --font-weight: 700;
+    --font-weight-bold: 800;
+  }
+
+  /* ===== Base / layout ===== */
   * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
   body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: -apple-system, "Segoe UI", "PingFang SC", sans-serif;
-    font-size: 14px;
+    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+    background: var(--editor-bg); color: var(--text);
+    font-family: var(--font-family); font-weight: var(--font-weight); font-size: 13px;
   }
-  header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 16px;
-    background: var(--panel);
-    border-bottom: 1px solid var(--border);
-    flex-wrap: wrap;
+  .app { display: flex; flex: 1; min-height: 0; }
+
+  /* ===== Activity bar ===== */
+  .activity-bar {
+    width: 48px; flex-shrink: 0; background: var(--activity-bg);
+    display: flex; flex-direction: column; align-items: stretch; padding: 4px 0;
   }
-  header .brand {
-    color: var(--accent);
-    font-weight: 700;
-    letter-spacing: 2px;
-    font-size: 16px;
-    margin-right: 8px;
+  .activity-bar button {
+    height: 48px; border: none; background: none; cursor: pointer;
+    color: var(--activity-icon); position: relative; opacity: .65; padding: 0;
+    display: flex; align-items: center; justify-content: center;
   }
-  button, select {
-    background: #242830;
-    border: 1px solid var(--border);
-    color: var(--text);
-    border-radius: 4px;
-    padding: 7px 12px;
-    font-size: 13px;
-    cursor: pointer;
+  .activity-bar button span {
+    writing-mode: vertical-rl; font-size: 13px; letter-spacing: 3px;
+    font-weight: var(--font-weight-bold);
   }
-  button:hover:not(:disabled), select:hover { border-color: var(--accent); }
-  button:disabled { opacity: 0.4; cursor: not-allowed; }
-  button.primary { background: #5b4900; border-color: var(--accent); color: var(--accent); }
-  .status-dot {
-    width: 9px; height: 9px; border-radius: 50%;
-    background: var(--danger); display: inline-block; margin-right: 6px;
+  .activity-bar button:hover { opacity: 1; }
+  .activity-bar button.active { color: var(--activity-icon-active); opacity: 1; }
+  .activity-bar button.active::before {
+    content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px; background: var(--accent);
   }
-  .status-dot.connected { background: var(--ok); }
-  .status-text { color: var(--muted); }
-  main {
-    display: grid;
-    grid-template-columns: 1fr 300px;
-    gap: 12px;
-    padding: 12px;
-    height: calc(100vh - 58px);
+  .activity-bar .spacer { flex: 1; }
+
+  /* ===== Sidebar ===== */
+  .sidebar {
+    width: 320px; flex-shrink: 0; background: var(--sidebar-bg);
+    border-right: 1px solid var(--border); overflow-y: auto;
   }
-  .panel {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 10px;
-    overflow: auto;
+  .panel-view { display: none; padding: 12px; }
+  .panel-view.active { display: block; }
+  .panel-view h2 {
+    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
+    color: var(--text-muted); margin: 0 0 10px;
   }
-  #plot-panel { display: flex; flex-direction: column; }
-  #wave-canvas { width: 100%; flex: 1; min-height: 300px; background: #0b0d10; border-radius: 4px; }
-  .metrics-bar {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 8px;
-    margin-top: 10px;
-    font-size: 12px;
+  .panel-view h3 { font-size: 12px; color: var(--text); margin: 16px 0 6px; }
+  .hint { font-size: 11px; color: var(--text-muted); line-height: 1.55; margin: 4px 0; }
+
+  /* ===== Editor ===== */
+  .editor { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--editor-bg); }
+  .editor-toolbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 6px 12px; border-bottom: 1px solid var(--border);
   }
-  .metric {
-    background: #0b0d10;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 6px 8px;
+  .editor-title { font-weight: 600; margin-right: auto; }
+  .editor-toolbar label { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
+  #wave-canvas { flex: 1; min-height: 0; width: 100%; background: var(--canvas-bg); display: block; }
+
+  /* ===== Controls ===== */
+  button, select, input {
+    background: var(--input-bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: 3px; padding: 4px 8px; font-size: 12px; font-family: inherit;
   }
-  .metric .label { color: var(--muted); display: block; font-size: 11px; }
-  .metric .value { color: var(--text); font-weight: 600; font-size: 14px; }
-  .metric .value.warn { color: var(--danger); }
-  #channel-list h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  button { cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #ffffff; }
+
+  /* ===== Channel list ===== */
   .channel-row {
-    display: grid;
-    grid-template-columns: 18px 1fr 52px 40px 40px;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 0;
-    font-size: 12px;
-    border-bottom: 1px solid #21252c;
+    display: grid; grid-template-columns: 18px 1fr 52px 46px; align-items: center;
+    gap: 6px; padding: 3px 0; font-size: 12px; border-bottom: 1px solid var(--border);
   }
   .channel-row .swatch { width: 10px; height: 10px; border-radius: 2px; }
-  .channel-row .name { color: var(--text); }
   .channel-row .val { text-align: right; font-variant-numeric: tabular-nums; }
-  .channel-row .minmax { text-align: right; color: var(--muted); font-size: 10px; }
-  .toolbar-group { display: flex; align-items: center; gap: 6px; }
-  .spacer { flex: 1; }
-  footer { padding: 8px 16px; color: var(--muted); font-size: 11px; border-top: 1px solid var(--border); }
-  a { color: var(--accent); }
+  .channel-row .minmax { text-align: right; color: var(--text-muted); font-size: 10px; }
+
+  /* ===== Calibration ===== */
+  .calib-status { font-size: 12px; color: var(--accent); margin-bottom: 8px; min-height: 16px; }
+  .calib-params { display: flex; gap: 12px; font-size: 12px; margin-bottom: 6px; color: var(--text-muted); }
+  .calib-params input { width: 52px; padding: 3px 6px; }
+  .calib-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  .calib-hold { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); margin: 6px 0; }
+  .calib-result { max-height: 300px; overflow: auto; margin-top: 6px; }
+  .calib-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .calib-table th, .calib-table td { text-align: right; padding: 2px 4px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+  .calib-table th:first-child, .calib-table td:first-child { text-align: left; }
+  .calib-table tr.warn td { color: var(--warning); }
+  .calib-table tr.bad td { color: var(--danger); }
+  .calib-empty { color: var(--text-muted); font-size: 12px; }
+
+  /* 校准竖条：每通道一条，实时游标 + 静止/满行程/触发/释放标记 */
+  .calbars { display: flex; gap: 3px; margin: 8px 0 4px; align-items: flex-end; }
+  .calbar { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; }
+  .calbar-track { position: relative; width: 100%; height: 150px; background: var(--track-bg); border-radius: 2px; overflow: hidden; }
+  .calbar-range { position: absolute; left: 0; right: 0; background: var(--accent); opacity: .4; }
+  .calbar-line { position: absolute; left: 0; right: 0; height: 2px; }
+  .calbar-mark-baseline { background: var(--text); }
+  .calbar-mark-press { background: var(--warning); }
+  .calbar-mark-release { background: var(--ok); }
+  .calbar-cursor { position: absolute; left: -1px; right: -1px; height: 2px; background: var(--cursor-color); box-shadow: 0 0 2px var(--cursor-color); }
+  .calbar-name { font-size: 9px; color: var(--text-muted); writing-mode: vertical-rl; height: 30px; }
+
+  /* ===== Settings ===== */
+  .setting-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); }
+
+  /* ===== Status bar ===== */
+  .status-bar {
+    height: 26px; flex-shrink: 0; background: var(--statusbar-bg); color: var(--statusbar-text);
+    display: flex; align-items: center; gap: 14px; padding: 0 12px; font-size: 11px;
+  }
+  .status-bar .sb-item { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .status-bar .spacer { flex: 1; }
+  .status-bar select {
+    background: rgba(255,255,255,.16); color: var(--statusbar-text);
+    border: none; font-size: 11px; padding: 1px 4px;
+  }
+  .status-bar select option { color: #222; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); display: inline-block; }
+  .status-dot.connected { background: var(--ok); }
+  .status-bar .warn { color: var(--statusbar-warn); font-weight: 700; }
 </style>
 </head>
-<body>
-<header>
-  <span class="brand">MEGKNOB · WEB CONFIGURATOR</span>
+<body data-theme="vscode-dark">
+  <div class="app">
+    <!-- Activity bar: click an icon to switch the sidebar panel. -->
+    <aside class="activity-bar" id="activity-bar">
+      <button data-panel="monitor" class="active" title="波形监视"><span>监视</span></button>
+      <button data-panel="calibrate" title="逐键校准"><span>校准</span></button>
+      <button data-panel="connect" title="连接"><span>连接</span></button>
+      <div class="spacer"></div>
+      <button data-panel="settings" title="设置"><span>设置</span></button>
+    </aside>
 
-  <div class="toolbar-group">
-    <span class="status-dot" id="status-dot"></span>
-    <span class="status-text" id="status-text">未连接</span>
+    <!-- Sidebar: one .panel-view per tool, only the active one is shown. -->
+    <aside class="sidebar" id="sidebar">
+      <section class="panel-view active" data-panel="monitor">
+        <h2>通道监视</h2>
+        <div id="channels"></div>
+      </section>
+
+      <section class="panel-view" data-panel="calibrate">
+        <h2>逐键校准</h2>
+        <div class="calib-status" id="calib-status"></div>
+        <div class="calbars" id="calib-bars"></div>
+        <div class="calib-params">
+          <label>触发 <input id="calib-press-pct" type="number" value="40" min="1" max="99" />%</label>
+          <label>释放 <input id="calib-release-pct" type="number" value="20" min="1" max="99" />%</label>
+        </div>
+        <div class="calib-actions">
+          <button id="btn-calib-baseline">① 采静止电压</button>
+          <button id="btn-calib-bottom">② 采满行程</button>
+          <button id="btn-calib-compute">③ 计算阈值</button>
+        </div>
+        <label class="calib-hold"><input type="checkbox" id="calib-hold-all" /> 演示：按住全部</label>
+        <div class="calib-result" id="calib-result"></div>
+        <div class="calib-actions">
+          <button id="btn-calib-export">导出校准 JSON</button>
+          <button id="btn-calib-apply" disabled title="需固件 Issue D 双向命令协议">下发到设备</button>
+        </div>
+      </section>
+
+      <section class="panel-view" data-panel="connect">
+        <h2>连接</h2>
+        <div class="calib-actions">
+          <button id="btn-connect" class="primary">连接设备</button>
+          <button id="btn-disconnect" disabled>断开</button>
+        </div>
+        <div class="calib-actions">
+          <button id="btn-demo">演示模式</button>
+        </div>
+        <h3>说明</h3>
+        <p class="hint">仅支持 Chrome / Edge（Web Serial）。HID 走 BLE（无线）或 USB HID；波形/遥测走 USB CDC ACM，需插 USB 线。</p>
+        <h3>协议</h3>
+        <p class="hint">v3 · 62-byte 帧 · CRC-16/CCITT-FALSE · 24 通道 mV · 采样与阈值计算在网页端完成</p>
+      </section>
+
+      <section class="panel-view" data-panel="settings">
+        <h2>设置</h2>
+        <label class="setting-row">主题
+          <select class="theme-select">
+            <option value="vscode-dark">VSCode Dark</option>
+            <option value="vscode-light">VSCode Light</option>
+            <option value="arduino">Arduino</option>
+            <option value="cubemx">CubeMX</option>
+            <option value="eva">EVA</option>
+          </select>
+        </label>
+        <h3>插件</h3>
+        <p class="hint">面板采用注册式结构。后续可新增：参数读写（Issue D）、触发点、Rapid Trigger、RGB、OLED 状态等插件面板，加一项即出一栏。</p>
+      </section>
+    </aside>
+
+    <!-- Editor: live waveform + its toolbar. -->
+    <main class="editor">
+      <div class="editor-toolbar">
+        <span class="editor-title">实时波形 · 24 通道</span>
+        <label>时基
+          <select id="timebase">
+            <option value="2">2 s</option>
+            <option value="5" selected>5 s</option>
+            <option value="10">10 s</option>
+            <option value="20">20 s</option>
+          </select>
+        </label>
+        <label>量程
+          <select id="vrange">
+            <option value="2000">0-2.0 V</option>
+            <option value="2500">0-2.5 V</option>
+            <option value="3300" selected>0-3.3 V</option>
+          </select>
+        </label>
+        <button id="btn-clear">清屏</button>
+        <button id="btn-export">导出 CSV</button>
+      </div>
+      <canvas id="wave-canvas"></canvas>
+    </main>
   </div>
 
-  <div class="toolbar-group">
-    <button id="btn-connect" class="primary">连接设备</button>
-    <button id="btn-disconnect" disabled>断开</button>
-  </div>
-
-  <div class="toolbar-group">
-    <label for="timebase">时基</label>
-    <select id="timebase">
-      <option value="2">2 s</option>
-      <option value="5" selected>5 s</option>
-      <option value="10">10 s</option>
-      <option value="20">20 s</option>
-    </select>
-  </div>
-
-  <div class="toolbar-group">
-    <label for="vrange">量程</label>
-    <select id="vrange">
-      <option value="2000">0-2.0 V</option>
-      <option value="2500">0-2.5 V</option>
-      <option value="3300" selected>0-3.3 V</option>
-    </select>
-  </div>
-
-  <button id="btn-clear">清屏</button>
-  <button id="btn-export">导出 CSV</button>
-
-  <div class="spacer"></div>
-  <span class="status-text">仅支持 Chrome / Edge（Web Serial）</span>
-</header>
-
-<main>
-  <div class="panel" id="plot-panel">
-    <canvas id="wave-canvas"></canvas>
-    <div class="metrics-bar" id="metrics-bar">
-      <div class="metric"><span class="label">设备扫描率</span><span class="value" id="m-scan-hz">-</span></div>
-      <div class="metric"><span class="label">主机接收帧率</span><span class="value" id="m-rx-hz">-</span></div>
-      <div class="metric"><span class="label">吞吐量</span><span class="value" id="m-throughput">-</span></div>
-      <div class="metric"><span class="label">序号丢帧</span><span class="value" id="m-lost">-</span></div>
-      <div class="metric"><span class="label">CRC 错误</span><span class="value" id="m-crc">-</span></div>
-      <div class="metric"><span class="label">固件/协议版本</span><span class="value" id="m-version">-</span></div>
-    </div>
-  </div>
-
-  <div class="panel" id="channel-list">
-    <h3>24 通道</h3>
-    <div id="channels"></div>
-  </div>
-</main>
-
-<footer>
-  协议 v3（62-byte 帧）· 只读实时波形 MVP，参数读写协议见路线图 Issue D（中期目标）
-</footer>
+  <!-- Status bar -->
+  <footer class="status-bar">
+    <span class="sb-item"><span class="status-dot" id="status-dot"></span><span id="status-text">未连接</span></span>
+    <span class="sb-item">扫描 <span class="value" id="m-scan-hz">-</span></span>
+    <span class="sb-item">接收 <span class="value" id="m-rx-hz">-</span></span>
+    <span class="sb-item">吞吐 <span class="value" id="m-throughput">-</span></span>
+    <span class="sb-item">丢帧 <span class="value" id="m-lost">-</span></span>
+    <span class="sb-item">校验 <span class="value" id="m-crc">-</span></span>
+    <span class="sb-item">协议 <span class="value" id="m-version">-</span></span>
+    <span class="spacer"></span>
+    <span class="sb-item">
+      <select class="theme-select">
+        <option value="vscode-dark">VSCode Dark</option>
+        <option value="vscode-light">VSCode Light</option>
+        <option value="arduino">Arduino</option>
+        <option value="cubemx">CubeMX</option>
+        <option value="eva">EVA</option>
+      </select>
+    </span>
+  </footer>
 
 <script src="app.js"></script>
 </body>

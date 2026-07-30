@@ -25,124 +25,51 @@
 
 ---
 
-## 短期目标：补齐输入模型缺陷 + 网页上位机 MVP
+## 短期目标：逐键校准（解决手感不一致）🚧
 
-三类已知的 Hall 轴输入正确性问题（串键、鬼键、modifier 卡键）已经全部实机验证清零。滚轮正交编码器也已完成实机校准；网页上位机仍需继续做 USB HID+CDC、BLE 并发稳定性验收。
+> 本区域实时更新，只跟踪当前正在推进的工作。已收官的 Issue A（滚轮正交编码器）、Issue B（网页上位机 MVP）已移入下方"开发日志 → 已完成 Issue 归档"，此处不再展开。
 
-### Issue A：滚轮 A/B 相迁移为正交编码器 ✅
+**问题现象（2026-07-30 用户反馈）**：很多按键按下去手感不一样——有的轻碰就触发，有的要按很深才触发。
 
-**问题结论**
+**根因分析**：`kscan_adc_mux.c` 目前对所有 24 通道使用**同一组全局绝对电压阈值**（`press-threshold-mv = <1000>`、`release-threshold-mv = <1300>`）。但每个磁轴键的磁铁强度、安装位置/角度、传感器个体差异都不同，导致每键的"松开静止电压（baseline）"和"按到底电压变化幅度（动态范围）"都不一样。用统一绝对阈值判定，必然使阈值相对各键 baseline 的距离远近不一——离得近的键过于灵敏，离得远的键迟钝——这就是手感不一致的直接原因，单靠调全局阈值无法根治。
 
-当前 `kscan_wheel` 是 1×3 GPIO 矩阵：`ROW1=P1.11`（公共），`COL0=P1.00`（按下）、`COL1=P0.11`（A 相）、`COL2=P0.24`（B 相）。A/B 两相目前被当成两个独立矩阵键（`RC(3,1)`/`RC(3,2)`，绑定 `RGB_EFF`/`RGB_BRI`），机械编码器每次转动 A、B 两相都会依次翻转，当成普通键处理时一次旋转必然同时触发两个方向的事件。正确方向只能由 `00 → 01 → 11 → 10` 或反向序列判断，需要 ZMK 的 `alps,ec11` 正交解码器，不是换键码能解决的问题。
+**职责划分（2026-07-30 确定）：采样与计算全在网页端，固件只接收并存储最终阈值。**
 
-**工作内容**
+- **网页端（智能侧）**：复用现有实时波形做校准向导——引导"松开所有键"对每键波形取平均得 baseline，再"按到底"取得满行程；在网页端按统一行程百分比（如按下 40%、释放 20%）并结合按下方向，算出**每键的 press/release 绝对毫伏阈值**，通过命令下发；同时对动态范围过小、传感器失效、方向接反的通道给出质量提示；
+- **固件端（执行/存储侧）**：`kscan_adc_mux` 的阈值由全局标量改为**每键数组**（24× press + 24× release），判定逐键取值；支持"读取 / 写入（RAM 试用）/ 保存 NVS / 恢复默认"命令；**不需要**校准模式状态机，也不需要固件采样 baseline/满行程。
 
-1. 用逻辑分析仪或 GPIO 日志确认滚轮静止电平、A/B 相顺序、每格脉冲数，以及是否需要 `GPIO_ACTIVE_LOW | GPIO_PULL_UP`；
-2. 在 overlay 中把 `P0.11`/`P0.24` 从 `kscan_wheel` 移出，新增 `compatible = "alps,ec11"` 的 encoder 节点；
-3. 保留 `P1.00`/`P1.11` 组成的滚轮按下矩阵，`kscan_wheel` 缩减为只含按下的 1×1 矩阵；
-4. 新增 `zmk,keymap-sensors` 节点，根据实测脉冲数设置 `steps` 与 `triggers-per-rotation`，不能直接照抄示例的 80/20；
-5. `megknob.conf` 启用 `CONFIG_EC11=y` 与 `CONFIG_EC11_TRIGGER_GLOBAL_THREAD=y`；
-6. keymap 用 `sensor-bindings = <&inc_dec_kp ...>` 分别绑定顺时针/逆时针；
-7. 先只验证 encoder delta 方向正确，再绑定具体功能（音量/滚动等）；
-8. 更新 `megknob_transform`：滚轮 A/B 不再占用键位矩阵，只保留滚轮按下；同步更新 `MEG_MAPPING.md`。
+**固件端改动清单**
 
-**实现结果（2026-07-29）**
+1. `kscan_adc_mux`：press/release 阈值从单值改为每键数组，判定逐键取值，保留全局阈值作为"恢复默认"的回落值；
+2. 命令协议（Issue D 首个命令）：读取 / 写入 / 保存 NVS / 恢复默认 每键阈值；
+3. NVS 持久化每键阈值，断电保留。
 
-- `P0.11`/`P0.24` 已从 `kscan_wheel` 移出，新增 `wheel_encoder`（`alps,ec11`）和 `zmk,keymap-sensors`；
-- `kscan_wheel` 已缩为仅保留 `P1.00`/`P1.11` 的 1×1 按下矩阵；
-- 已启用 `CONFIG_EC11` 与全局触发线程；滚轮旋转默认绑定音量增减；
-- `megknob_transform`、keymap 和 `MEG_MAPPING.md` 已同步移除 A/B 两个伪矩阵键位；
-- `steps = <80>` 和 `triggers-per-rotation = <20>` 仍是待硬件测量确认的初始参数，方向也需实机确认。
+**网页端改动清单**
 
-**实机修复与验收（2026-07-30）**
+1. 校准向导 UI：松开采样 baseline → 按到底采样满行程 → 显示每键动态范围与质量提示；
+2. 网页端计算每键 press/release 阈值并预览；
+3. 下发阈值到固件（先 RAM 试用确认手感，再保存 NVS）；
+4. 可选：把实时电压换算为 0–100% 行程显示，便于理解触发点。
 
-- 首版正交固件中，滚轮按下可以切换 RGB，但旋转完全没有响应。根因是 EC11 的 A/B 相由驱动异步采样，而公共端 `P1.11` 仍由 1×1 矩阵扫描短暂驱动，无法为 A/B 提供稳定参考；A/B 也没有上下拉；
-- 将 `P1.11` 改为 GPIO hog 持续输出高电平，`P0.11`/`P0.24` 改为带下拉的 active-high EC11 输入；
-- 滚轮按下 `P1.00` 从矩阵扫描改为 `zmk,kscan-gpio-direct` active-high 下拉输入，按下仍绑定 `RGB_TOG`；
-- 修复后旋转方向与音量加减均可识别，但初始 `triggers-per-rotation = <20>` 需要旋转约 2～3 个机械刻度才触发一次；
-- 将 `triggers-per-rotation` 提高到 `<40>` 后，每个最小机械刻度均能正常响应，编码器实机验收通过；
-- 最终保留 `steps = <80>`、`triggers-per-rotation = <40>`。若未来更换不同规格编码器，需要按其每圈机械刻度和正交边沿数重新校准。
+**当前进度（2026-07-30）**
+
+- ✅ 网页端校准向导已实现，可在无硬件下用演示数据完整跑通：步骤引导（① 松开采 baseline → ② 按到底采满行程 → ③ 计算阈值）、每键 baseline/满行程/动态范围/press/release 结果表、动态范围过小/偏小的质量分级、导出校准 JSON；演示模式新增"按住全部"辅助以模拟满行程采样；
+- ✅ 上位机 UI 重构为 VSCode 风格：左侧 Activity Bar（波形监视 / 逐键校准 / 连接 / 设置，竖排文字标签、无 emoji 的平面设计）+ Sidebar 面板（注册式结构，后续加插件面板只需加一项）+ 中央波形编辑区（含时基/量程/清屏/导出工具条）+ 底部状态栏（连接、扫描率、接收、吞吐、丢帧、校验、协议、主题快切）；提供 VSCode Dark / VSCode Light / Arduino / CubeMX / EVA 五套主题并用 localStorage 记忆选择，EVA 主题为粗衬线（宋体/明体）+ 初号机紫绿配色；界面文本已中文化（baseline→静止电压、press→触发、release→释放、RX→接收、CRC→校验）；
+- ✅ 校准面板加入每通道竖直电平条可视化：灰色轨道（0–3300mV）+ 实时电压游标 + 静止电压基准线 + 满行程动态范围填色 + 触发/释放阈值线，校准过程一目了然；
+- ⏳ "下发到设备"待 Issue D 双向命令协议（固件端每键阈值数组 + 读写/NVS 命令）实现后接通，当前按钮为禁用态并标注依赖。
 
 **验收标准**
 
-- 顺时针连续 100 格只产生顺时针事件，逆时针连续 100 格只产生逆时针事件；
-- 慢转、快转、半格返回和轴体抖动均不产生反向幽灵事件；
-- 每个机械刻度触发次数稳定，不丢步也不重复；
-- 边按滚轮边旋转时，按下和旋转可独立工作；
-- 滚轮按下仍能进入 ZMK keymap。
-
-**回退点**
-
-- 保留按下可用、旋转暂时禁用的固件；不回退到把 A/B 相当普通键发送的错误模型。
-
-### Issue B：网页上位机 MVP（Web Serial + CDC ACM 数据回传）✅（待固件/硬件验收）
-
-**实现结果（2026-07-29）**
-
-- overlay 已加入独立 `zephyr,cdc-acm-uart` 节点，并通过 `zmk,hall-telemetry-uart` chosen 节点连接遥测模块；`megknob.conf` 已启用 `CONFIG_HALL_TELEMETRY`；
-- 新增 `hall_telemetry` 模块：在独立的 `K_LOWEST_APPLICATION_THREAD_PRIO` 线程中发送 62-byte 协议 v3 帧；扫描侧只做 `K_NO_WAIT` 有界队列入队，队列满时丢弃最旧样本，避免 CDC 反压影响 Hall 扫描、HID 或 BLE；
-- `kscan_adc_mux_read()` 在完成整轮 24 通道采样后提交 mV 数据，不新增采样线程或 mutex；CRC-16/CCITT-FALSE 查表实现已与网页端逐位算法随机数据交叉验证一致；
-- 新增 `tools/megknob_web_configurator/`：提供 Web Serial 连接/断开、Web Worker 帧解析、24 路 Canvas 波形、通道开关与统计、扫描率/RX 帧率/CRC/序号丢帧指标及 CSV 导出；
-- 静态检查已通过；本机未安装 west/Zephyr SDK，完整固件构建与 USB HID+CDC、BLE 并发稳定性仍需在 CI 或开发容器及实体硬件上验证。
-
-**GitHub 方案调研结论**
-
-成熟键盘网页工具大致分两类，但没有项目能直接满足"ZMK + 磁轴逐键参数 + 实时波形"：
-
-| 方案 | 地址 | 可借鉴内容 | 对 MegKnob 的限制 |
-|---|---|---|---|
-| ZMK Studio | <https://github.com/zmkfirmware/zmk-studio> / <https://zmk.studio/> | 官方运行时 keymap 编辑、USB 串口与 BLE 配置入口 | 不支持磁轴校准、触发点、实时波形，不能注入自定义页面 |
-| ZMK custom Studio RPC 模板 | <https://github.com/cormoran/zmk-module-template-with-custom-studio-rpc> | 自定义固件 RPC 与 Web 客户端范式 | 需要自己设计 RPC 与 UI |
-| VIA | <https://github.com/the-via/app> | 成熟 WebHID 配置器架构 | 面向 QMK/VIA，不兼容 ZMK |
-| Vial | <https://github.com/vial-kb/vial-gui> | 动态 keymap、宏和参数编辑 UX | 面向 QMK/Vial，不兼容 ZMK |
-| ZMK keymap-editor | <https://github.com/nickcoutsos/keymap-editor> | ZMK keymap 网页编辑体验 | 编辑配置文件，非实时磁轴工具 |
-| Wootility / Keychron Launcher | 厂商工具 | 触发点/RT/校准 UX 参考 | 闭源，只能参考交互，不能复制实现 |
-
-采用**双轨架构**：通用键位/层/behavior 走官方 ZMK Studio；磁轴专用功能（实时波形、触发点参数）走 MegKnob 专用 Web Configurator，第一版通过 Chromium Web Serial 直接复用 v3 数据流。
-
-**工作内容**
-
-1. **固件端 - 恢复 CDC ACM（不影响 HID/BLE）**：
-   - 在 overlay 中重新加入 `zephyr,cdc-acm-uart` 节点，`megknob.conf` 打开 `CONFIG_USB_CDC_ACM=y`，保持 `CONFIG_USB_DEVICE_STACK=y`；
-   - 验证 USB 复合设备能同时暴露 HID + CDC，不产生 endpoint/描述符冲突；
-2. **固件端 - 重新实现协议 v3 数据回传，明确与 BLE/HID 的调度隔离**：
-   - 使用 62-byte 帧格式（`MK` magic、version=3、type、mode、sample count、seq、`uint32` 微秒时间戳、24 路 mV 采样、CRC-16/CCITT-FALSE）；
-   - 采样直接挂在现有 `kscan_adc_mux_read()` 扫描循环上取值，不新增独立扫描线程、不新增 mutex，避免重蹈 `df656f66` 覆辙；
-   - 发送路径使用有界队列 + 满时丢最旧帧（`K_NO_WAIT`），CDC 忙碌不能拖慢按键扫描；
-   - 发送优先级/线程明确低于 BLE/USB HID 相关工作队列；
-   - 先在无 BLE 场景验证遥测本身正确，再叠加 BLE 一起测调度争抢；
-3. **网页端**：
-   - Web Serial 连接/断开，显示固件版本、协议版本、设备状态；
-   - 解析 62-byte v3 帧，绘制 24 路实时波形（Canvas/WebGL，避免频繁重排）；
-   - 通道分组、显示开关、当前 mV、min/max/均值/峰峰值；
-   - 显示 scan rate、RX fps、CRC 错误、序号丢帧；
-   - 协议解析放在 Web Worker，UI 线程只接收批量结果；
-   - 只支持 Chrome/Edge（Web Serial 限制），不做 Safari/Firefox 兼容。
-
-**协议设计原则**
-
-- 保留现有 v3 DATA/MODE/PERF 帧定义，不破坏 `tools/megknob_hall_viewer.py` 的解析逻辑；
-- 遥测使用有界缓存和丢旧策略；
-- 实时数据不追求可靠传输，UI 展示为主，不在这一版做双向参数写入协议（放到中期目标）。
-
-**待固件/硬件验收标准**
-
-- USB 同时识别键盘 HID 与 CDC 串口，两者互不干扰；
-- 打开 CDC 遥测后，BLE 连接稳定性、HID 输入延迟与 Issue A 完成后的基线相比无明显劣化；
-- Chrome/Edge 能稳定连接、断开、重新连接网页；
-- 连续显示 24 路波形 30 分钟无内存持续增长；
-- 网页端 CRC、序号和数值结果与现有 Python 上位机一致；
-- 网页断开或崩溃不会影响 HID/BLE 正常工作。
-
-**回退点**
-
-- 关闭 CDC 遥测、仅保留 HID+BLE 的当前稳定固件。
+- 校准后所有键在相同物理行程（如同一把直尺压到同一深度）触发，主观手感一致；
+- 校准数据断电保留，重新上电无需重新校准；
+- 恢复默认值后回到全局阈值行为；
+- 校准过程不丢波形帧、不影响 HID/BLE 输入。
 
 ---
 
 ## 中期目标：参数化配置与产品化外设
 
-短期目标（正交编码器 + 网页上位机基础链路）完成后，进入这一阶段。这里的条目在完整可用之前不阻塞短期目标，可以按硬件到货和验证进度并行推进。
+上一阶段（正交编码器 + 网页上位机基础链路）已完成，当前短期目标聚焦"逐键校准"（见上），其依赖的双向协议即 Issue D。这里的条目在完整可用之前不阻塞当前短期目标，可以按硬件到货和验证进度并行推进。
 
 ### Issue C：恢复完整键位与蓝牙/输出功能层 🚧
 
@@ -154,12 +81,13 @@
 - 验证 USB/BLE 输出切换前后不残留 modifier 或卡住普通键。
 - 🧊 **非阻塞项**：评估在连接状态变化（USB 拔出、BLE 断开）时主动触发一次全键释放，覆盖"设备未被显式 disable，但连接已断开"的场景；目前 `kscan_adc_mux_disable()` 路径已覆盖断连/disable 场景，且 2026-07-29 实测未复现卡键，此项优先级下调。
 
-### Issue D：网页上位机参数读写协议
+### Issue D：网页上位机参数读写协议（首个落地命令 = 每键阈值下发）
 
 - 在 Issue B 只读实时波形的基础上，新增主机到设备命令：读取配置、写入配置、保存 NVS、恢复默认值、开始/停止遥测；
 - 命令帧包含 magic、version、command、payload length、request id、CRC，读写均有明确 ACK/NACK 和错误码；
-- 参数第一版支持全局 press/release threshold 和 debounce 时间，逐键校准和 Rapid Trigger 留到长期目标；
-- RAM 试用与 NVS 持久化分开，避免拖动滑块时频繁写 Flash；
+- **首个落地命令是每键 press/release 阈值的读取 / 写入 / 保存 / 恢复默认**：baseline 采样与阈值计算都在网页端完成（见"短期目标"），固件只接收最终阈值，不实现校准模式或采样状态机；随后再扩展 debounce 时间、扫描率等参数；
+- Rapid Trigger 仍留到长期目标；
+- RAM 试用与 NVS 持久化分开，避免拖动滑块/校准时频繁写 Flash；
 - 固件端做最终范围校验，网页端校验不能替代固件校验。
 
 ### Issue E：与 ZMK Studio 集成评估
@@ -201,7 +129,9 @@
 
 ## 长期目标：从"能输入"发展为完整的无线磁轴键盘平台
 
-### 1. 逐键校准与统一行程模型
+### 1. 逐键校准与统一行程模型（基础版已提前为当前短期目标）
+
+> 基础逐键校准（每键阈值下发）已提前为当前"短期目标"；以下为固件端归一化行程等长期增强项。
 
 - 为每个实际磁轴键保存释放电压、按到底电压、方向、死区和噪声；
 - 将不同传感器的毫伏值归一化为 0–100% 行程；
@@ -254,6 +184,107 @@
 ---
 
 # 开发日志（倒序，按天折叠）
+
+> 下方"已完成 Issue 归档"保存从顶部 roadmap 移入的已收官 Issue 完整记录，仅作存档，不代表当前工作；当前推进见上方"短期目标"。按天的开发日志在归档之后。
+
+## 已完成 Issue 归档
+
+<details>
+<summary><strong>Issue A</strong>：滚轮 A/B 相迁移为正交编码器 ✅（2026-07-29 实现 / 2026-07-30 实机验收）</summary>
+
+**问题结论**
+
+原 `kscan_wheel` 是 1×3 GPIO 矩阵：`ROW1=P1.11`（公共），`COL0=P1.00`（按下）、`COL1=P0.11`（A 相）、`COL2=P0.24`（B 相）。A/B 两相曾被当成两个独立矩阵键（`RC(3,1)`/`RC(3,2)`，绑定 `RGB_EFF`/`RGB_BRI`），机械编码器每次转动 A、B 两相都会依次翻转，当成普通键处理时一次旋转必然同时触发两个方向的事件。正确方向只能由 `00 → 01 → 11 → 10` 或反向序列判断，需要 ZMK 的 `alps,ec11` 正交解码器，不是换键码能解决的问题。
+
+**实现结果（2026-07-29）**
+
+- `P0.11`/`P0.24` 已从 `kscan_wheel` 移出，新增 `wheel_encoder`（`alps,ec11`）和 `zmk,keymap-sensors`；
+- `kscan_wheel` 已缩为仅保留 `P1.00`/`P1.11` 的 1×1 按下矩阵；
+- 已启用 `CONFIG_EC11` 与全局触发线程；滚轮旋转默认绑定音量增减；
+- `megknob_transform`、keymap 和 `MEG_MAPPING.md` 已同步移除 A/B 两个伪矩阵键位。
+
+**实机修复与验收（2026-07-30）**
+
+- 首版正交固件中，滚轮按下可以切换 RGB，但旋转完全没有响应。根因是 EC11 的 A/B 相由驱动异步采样，而公共端 `P1.11` 仍由 1×1 矩阵扫描短暂驱动，无法为 A/B 提供稳定参考；A/B 也没有上下拉；
+- 将 `P1.11` 改为 GPIO hog 持续输出高电平，`P0.11`/`P0.24` 改为带下拉的 active-high EC11 输入；
+- 滚轮按下 `P1.00` 从矩阵扫描改为 `zmk,kscan-gpio-direct` active-high 下拉输入，按下仍绑定 `RGB_TOG`；
+- 修复后旋转方向与音量加减均可识别，但初始 `triggers-per-rotation = <20>` 需要旋转约 2～3 个机械刻度才触发一次；
+- 将 `triggers-per-rotation` 提高到 `<40>` 后，每个最小机械刻度均能正常响应，编码器实机验收通过；
+- 最终保留 `steps = <80>`、`triggers-per-rotation = <40>`。若未来更换不同规格编码器，需要按其每圈机械刻度和正交边沿数重新校准。
+
+</details>
+
+<details>
+<summary><strong>Issue B</strong>：网页上位机 MVP（Web Serial + CDC ACM 数据回传）✅（2026-07-29 实现 / 2026-07-30 实机在用）</summary>
+
+**实现结果（2026-07-29）**
+
+- overlay 已加入独立 `zephyr,cdc-acm-uart` 节点，并通过 `zmk,hall-telemetry-uart` chosen 节点连接遥测模块；`megknob.conf` 已启用 `CONFIG_HALL_TELEMETRY`；
+- 新增 `hall_telemetry` 模块：在独立的 `K_LOWEST_APPLICATION_THREAD_PRIO` 线程中发送 62-byte 协议 v3 帧；扫描侧只做 `K_NO_WAIT` 有界队列入队，队列满时丢弃最旧样本，避免 CDC 反压影响 Hall 扫描、HID 或 BLE；
+- `kscan_adc_mux_read()` 在完成整轮 24 通道采样后提交 mV 数据，不新增采样线程或 mutex；CRC-16/CCITT-FALSE 查表实现已与网页端逐位算法随机数据交叉验证一致；
+- 新增 `tools/megknob_web_configurator/`：提供 Web Serial 连接/断开、Web Worker 帧解析、24 路 Canvas 波形、通道开关与统计、扫描率/RX 帧率/CRC/序号丢帧指标及 CSV 导出。
+
+**GitHub 方案调研结论**
+
+成熟键盘网页工具大致分两类，但没有项目能直接满足"ZMK + 磁轴逐键参数 + 实时波形"：
+
+| 方案 | 地址 | 可借鉴内容 | 对 MegKnob 的限制 |
+|---|---|---|---|
+| ZMK Studio | <https://github.com/zmkfirmware/zmk-studio> / <https://zmk.studio/> | 官方运行时 keymap 编辑、USB 串口与 BLE 配置入口 | 不支持磁轴校准、触发点、实时波形，不能注入自定义页面 |
+| ZMK custom Studio RPC 模板 | <https://github.com/cormoran/zmk-module-template-with-custom-studio-rpc> | 自定义固件 RPC 与 Web 客户端范式 | 需要自己设计 RPC 与 UI |
+| VIA | <https://github.com/the-via/app> | 成熟 WebHID 配置器架构 | 面向 QMK/VIA，不兼容 ZMK |
+| Vial | <https://github.com/vial-kb/vial-gui> | 动态 keymap、宏和参数编辑 UX | 面向 QMK/Vial，不兼容 ZMK |
+| ZMK keymap-editor | <https://github.com/nickcoutsos/keymap-editor> | ZMK keymap 网页编辑体验 | 编辑配置文件，非实时磁轴工具 |
+| Wootility / Keychron Launcher | 厂商工具 | 触发点/RT/校准 UX 参考 | 闭源，只能参考交互，不能复制实现 |
+
+采用**双轨架构**：通用键位/层/behavior 走官方 ZMK Studio；磁轴专用功能（实时波形、触发点参数）走 MegKnob 专用 Web Configurator，第一版通过 Chromium Web Serial 直接复用 v3 数据流。
+
+**协议设计原则**
+
+- 保留现有 v3 DATA/MODE/PERF 帧定义，不破坏 `tools/megknob_hall_viewer.py` 的解析逻辑；
+- 遥测使用有界缓存和丢旧策略；实时数据不追求可靠传输，UI 展示为主。
+
+**连接架构（2026-07-30 实机确认）**
+
+- HID 走 BLE（无线）或 USB HID，遥测走 USB CDC ACM；网页上位机基于 Web Serial，**只能访问本机 USB 串口，无法通过 BLE 连接**——因此"无线打字 + 插线看波形"是当前标准用法，看波形必须插 USB 线；
+- 若未来要不插线看波形，需改用 Web Bluetooth：固件把遥测经自定义 BLE GATT characteristic 以 notify 推送并做降采样（见长期目标 3）；BLE 带宽有限，不适合日常持续输出高频波形，只做按需诊断；
+- 实机已验证 HID(BLE) + CDC(USB) 共存、24 路波形实时刷新正常。
+
+**实机验收结果**
+
+- ✅ USB 同时识别键盘 HID 与 CDC 串口，两者互不干扰；
+- ✅ HID 经 BLE 输入、CDC 经 USB 输出波形可同时工作，未见 BLE 掉线或输入延迟劣化；
+- ✅ Chrome/Edge 能稳定连接、断开、重新连接网页；
+- ✅ 24 路波形实时刷新正常；
+- 🧊 30 分钟内存长测、与 Python 上位机数值逐帧对照：降级为长期加固项。
+
+</details>
+
+---
+
+<details>
+<summary><strong>2026-07-30</strong>：短期目标收尾——网页上位机连接架构确认与逐键校准立项</summary>
+
+## 短期目标完成确认
+
+- Issue A（滚轮正交编码器）：实机验收通过（见下一条 07-30 日志）；
+- Issue B（网页上位机 MVP）：网页端已能实时看到 24 路波形，HID 与遥测共存正常，短期目标整体完成。
+
+## 网页上位机连接架构（回答"是否必须插 USB"）
+
+当前遥测链路是：固件 `hall_telemetry` → USB CDC ACM 虚拟串口 → 浏览器 Web Serial。Web Serial 只能访问本机 USB/串口设备，**无法通过 BLE 连接**，所以：
+
+- HID：走 BLE（无线）或 USB HID，可纯无线打字；
+- 波形/遥测：必须插 USB 线才能看；
+- 即"无线打字 + 插线看波形"是当前标准用法，两者互不干扰。
+
+若要不插线看波形，需改用 Web Bluetooth：固件把遥测经自定义 BLE GATT characteristic 以 notify 推送并降采样。但 BLE 带宽有限，持续高频波形会挤占 HID 与续航，只适合按需诊断，列为长期目标 3，不在当前做。
+
+## 手感不一致根因与逐键校准立项
+
+用户反馈多键手感不一致。定位为 `kscan_adc_mux.c` 用全局统一绝对阈值（press 1000mV / release 1300mV）判定所有通道，而各磁轴键 baseline 与动态范围天然不同，统一阈值相对各键的距离不一，导致灵敏度参差。根治需逐键校准 + 归一化行程（0–100%），已从长期目标 1 提前为"当前焦点"，其双向命令通道复用 Issue D 协议，校准作为该协议首个落地命令。
+
+</details>
 
 <details>
 <summary><strong>2026-07-30</strong>：EC11 公共端修复与滚轮分辨率实机校准完成</summary>
