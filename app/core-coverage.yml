@@ -9,6 +9,10 @@ shield:
   - settings_reset
   - tidbit
 include:
+  # MegKnob exercises the Hall ADC mux, CDC telemetry, command RX, and
+  # settings/NVS code paths that are not covered by the generic shields.
+  - board: nice_nano//zmk
+    shield: megknob
   - board: bdn9//zmk
   - board: nice60//zmk
   - board: xiao_ble//zmk
