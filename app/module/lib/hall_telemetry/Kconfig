@@ -10,6 +10,7 @@ menuconfig HALL_TELEMETRY
     select USB_DEVICE_STACK
     select USB_CDC_ACM
     select UART_INTERRUPT_DRIVEN
+    select SETTINGS
     help
       Stream 24-channel Hall/ADC voltage samples out over a dedicated USB CDC
       ACM virtual serial port, using the MegKnob protocol v3 wire format, so

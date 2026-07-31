@@ -60,15 +60,24 @@ struct kscan_adc_mux_data {
  * a finger resting near the threshold can make the driver emit dozens of
  * spurious press/release pairs per second, which is what was causing
  * modifiers (Ctrl/Alt/GUI) to get stuck: see kscan_adc_mux_read() below. */
-static bool kscan_adc_mux_pressed(const struct kscan_adc_mux_config *config, bool was_pressed,
+static bool kscan_adc_mux_pressed(const struct device *dev, uint16_t idx, bool was_pressed,
                                   int32_t sample_mv) {
+    const struct kscan_adc_mux_config *config = dev->config;
+    int32_t press_mv = config->press_threshold_mv;
+    int32_t release_mv = config->release_threshold_mv;
+
+    /* If the web configurator has downloaded a per-key calibration (Issue D
+     * command protocol), it overrides the DT-global defaults for this key;
+     * hall_telemetry_get_thresholds() returns false until then, keeping the
+     * defaults. On boards without CONFIG_HALL_TELEMETRY this is an inline stub
+     * that always returns false, so the defaults are always used. */
+    (void)hall_telemetry_get_thresholds(idx, &press_mv, &release_mv);
+
     if (config->press_is_greater) {
-        return was_pressed ? sample_mv > config->release_threshold_mv
-                           : sample_mv > config->press_threshold_mv;
+        return was_pressed ? sample_mv > release_mv : sample_mv > press_mv;
     }
 
-    return was_pressed ? sample_mv < config->release_threshold_mv
-                       : sample_mv < config->press_threshold_mv;
+    return was_pressed ? sample_mv < release_mv : sample_mv < press_mv;
 }
 
 static int kscan_adc_mux_set_address(const struct device *dev, uint8_t address) {
@@ -151,7 +160,7 @@ static int kscan_adc_mux_read(const struct device *dev) {
              * the debounced/latched state from the previous scan so the
              * hysteresis (press vs release threshold) still applies. */
             bool raw_pressed =
-                kscan_adc_mux_pressed(config, zmk_debounce_is_pressed(deb_state), sample_mv);
+                kscan_adc_mux_pressed(dev, idx, zmk_debounce_is_pressed(deb_state), sample_mv);
 
             zmk_debounce_update(deb_state, raw_pressed, config->polling_interval_ms,
                                 &config->debounce_config);

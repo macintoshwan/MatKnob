@@ -41,10 +41,34 @@
  */
 #if IS_ENABLED(CONFIG_HALL_TELEMETRY)
 void hall_telemetry_submit(uint8_t mode, const int32_t sample_mv[HALL_TELEMETRY_CHANNELS]);
+
+/**
+ * Reads the currently active per-key press/release thresholds for one channel,
+ * if a per-key calibration has been downloaded from the web configurator (see
+ * the Issue D command protocol). kscan drivers call this per key and fall back
+ * to their devicetree-global defaults when it returns false (no calibration
+ * applied yet, or thresholds were reset to defaults).
+ *
+ * @param channel    Channel index 0..HALL_TELEMETRY_CHANNELS-1, matching the
+ *                   kscan key index and the telemetry frame's channel order.
+ * @param press_mv   Output: press threshold in millivolts.
+ * @param release_mv Output: release threshold in millivolts.
+ * @return true if per-key thresholds are active and were written to the
+ *         outputs; false to use the devicetree defaults instead.
+ */
+bool hall_telemetry_get_thresholds(uint8_t channel, int32_t *press_mv, int32_t *release_mv);
 #else
 static inline void hall_telemetry_submit(uint8_t mode,
                                          const int32_t sample_mv[HALL_TELEMETRY_CHANNELS]) {
     ARG_UNUSED(mode);
     ARG_UNUSED(sample_mv);
+}
+
+static inline bool hall_telemetry_get_thresholds(uint8_t channel, int32_t *press_mv,
+                                                 int32_t *release_mv) {
+    ARG_UNUSED(channel);
+    ARG_UNUSED(press_mv);
+    ARG_UNUSED(release_mv);
+    return false;
 }
 #endif
