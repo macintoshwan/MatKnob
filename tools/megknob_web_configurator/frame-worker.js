@@ -39,7 +39,10 @@ function crc16(bytes, len) {
   for (let i = 0; i < len; i++) {
     crc ^= bytes[i] << 8;
     for (let bit = 0; bit < 8; bit++) {
-      crc = (crc & 0x8000) !== 0 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+      crc =
+        (crc & 0x8000) !== 0
+          ? ((crc << 1) ^ 0x1021) & 0xffff
+          : (crc << 1) & 0xffff;
     }
   }
   return crc;
@@ -150,7 +153,10 @@ function decodeFrames() {
       // tools/megknob_hall_viewer.py's Metrics.add_frame(), then track the
       // inter-frame period so we can report a real device scan rate derived
       // from firmware timestamps (not a browser-side estimate).
-      if (metrics.lastRawTimestampUs !== null && timestampUs < metrics.lastRawTimestampUs) {
+      if (
+        metrics.lastRawTimestampUs !== null &&
+        timestampUs < metrics.lastRawTimestampUs
+      ) {
         metrics.deviceWrapBase += 2 ** 32;
       }
       const unwrappedUs = metrics.deviceWrapBase + timestampUs;
@@ -176,7 +182,7 @@ function decodeFrames() {
 self.onmessage = (event) => {
   const { kind, payload } = event.data;
 
-  if (kind === 'bytes') {
+  if (kind === "bytes") {
     appendBytes(new Uint8Array(payload));
     const frames = decodeFrames();
 
@@ -184,9 +190,10 @@ self.onmessage = (event) => {
     if (frames.length > 0 || now - metrics.lastReportAt > 250) {
       metrics.lastReportAt = now;
       const elapsedS = Math.max((now - metrics.startedAt) / 1000, 1e-6);
-      const meanPeriodUs = metrics.periodCount > 0 ? metrics.periodSumUs / metrics.periodCount : 0;
+      const meanPeriodUs =
+        metrics.periodCount > 0 ? metrics.periodSumUs / metrics.periodCount : 0;
       self.postMessage({
-        kind: 'frames',
+        kind: "frames",
         frames,
         metrics: {
           frames: metrics.frames,
@@ -200,7 +207,7 @@ self.onmessage = (event) => {
         },
       });
     }
-  } else if (kind === 'reset') {
+  } else if (kind === "reset") {
     buffer = new Uint8Array(0);
     metrics.frames = 0;
     metrics.dataFrames = 0;

@@ -98,7 +98,7 @@ struct hall_telemetry_item {
 static const struct device *const hall_telemetry_uart = DEVICE_DT_GET(HALL_TELEMETRY_UART_NODE);
 
 K_MSGQ_DEFINE(hall_telemetry_queue, sizeof(struct hall_telemetry_item),
-             CONFIG_HALL_TELEMETRY_QUEUE_DEPTH, 4);
+              CONFIG_HALL_TELEMETRY_QUEUE_DEPTH, 4);
 
 static uint16_t hall_telemetry_seq;
 static uint32_t hall_telemetry_scan_count;
@@ -136,8 +136,10 @@ static uint16_t hall_telemetry_crc16(const uint8_t *data, size_t len) {
     uint16_t crc = 0xFFFF;
 
     for (size_t i = 0; i < len; i++) {
-        crc = (uint16_t)((crc << 4) ^ hall_telemetry_crc_nibble_table[((crc >> 12) ^ (data[i] >> 4)) & 0xF]);
-        crc = (uint16_t)((crc << 4) ^ hall_telemetry_crc_nibble_table[((crc >> 12) ^ (data[i] & 0xF)) & 0xF]);
+        crc = (uint16_t)((crc << 4) ^
+                         hall_telemetry_crc_nibble_table[((crc >> 12) ^ (data[i] >> 4)) & 0xF]);
+        crc = (uint16_t)((crc << 4) ^
+                         hall_telemetry_crc_nibble_table[((crc >> 12) ^ (data[i] & 0xF)) & 0xF]);
     }
 
     return crc;
@@ -317,9 +319,7 @@ K_THREAD_DEFINE(hall_cmd_rx_thread, 1024, hall_cmd_rx_worker, NULL, NULL, NULL,
 /* --- TX path: a single thread writes the UART for both data + ack frames --- */
 static void hall_telemetry_send_ack_frame(uint8_t cmd, uint8_t status) {
     uint8_t ack[8] = {
-        HALL_ACK_MAGIC0, HALL_ACK_MAGIC1, HALL_TELEMETRY_VERSION,
-        HALL_ACK_TYPE,   cmd,             status,
-        0,               0,
+        HALL_ACK_MAGIC0, HALL_ACK_MAGIC1, HALL_TELEMETRY_VERSION, HALL_ACK_TYPE, cmd, status, 0, 0,
     };
     uint16_t crc = hall_telemetry_crc16(ack, 6);
     ack[6] = crc & 0xff;
