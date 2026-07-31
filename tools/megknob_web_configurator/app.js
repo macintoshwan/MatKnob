@@ -38,9 +38,10 @@ function channelColors() {
 // data-panel="<id>"> in the sidebar plus an activity-bar <button
 // data-panel="<id>">, then list the id here. The switcher is generic.
 const PANELS = ['monitor', 'calibrate', 'connect', 'settings'];
+const SIDEBAR_TITLES = { monitor: '通道监视', calibrate: '逐键校准', connect: '连接', settings: '设置' };
 
 function activatePanel(id) {
-  document.querySelectorAll('.activity-bar button').forEach((b) => {
+  document.querySelectorAll('.activity-bar .ab-item[data-panel]').forEach((b) => {
     b.classList.toggle('active', b.dataset.panel === id);
   });
   document.querySelectorAll('.panel-view').forEach((s) => {
@@ -49,9 +50,76 @@ function activatePanel(id) {
 }
 
 function initPanels() {
-  document.querySelectorAll('.activity-bar button').forEach((b) => {
+  document.querySelectorAll('.activity-bar .ab-item[data-panel]').forEach((b) => {
     b.addEventListener('click', () => activatePanel(b.dataset.panel));
   });
+}
+
+// --- Collapsible sidebar sections (VSCode Explorer-style <summary>) ---
+function initSections() {
+  document.querySelectorAll('.sec-header').forEach((header) => {
+    header.addEventListener('click', () => {
+      header.closest('.sec').classList.toggle('collapsed');
+    });
+  });
+}
+
+// --- Sidebar resize handle ---
+function initSidebarResize() {
+  const handle = document.getElementById('sidebar-resize');
+  const sidebar = document.getElementById('sidebar');
+  if (!handle || !sidebar) return;
+  let dragging = false;
+  handle.addEventListener('mousedown', (e) => {
+    dragging = true;
+    e.preventDefault();
+    document.body.style.cursor = 'col-resize';
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const rect = sidebar.getBoundingClientRect();
+    const w = Math.min(480, Math.max(170, e.clientX - rect.left));
+    sidebar.style.width = w + 'px';
+  });
+  window.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.style.cursor = '';
+    resizeCanvas();
+  });
+}
+
+// --- Bottom panel: tab switching + collapse (VSCode Terminal/Problems style) ---
+function initBottomPanel() {
+  document.querySelectorAll('.panel-tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.panel-tab').forEach((t) => t.classList.toggle('active', t === tab));
+      document.querySelectorAll('.panel-view-inner').forEach((v) => {
+        v.classList.toggle('active', v.dataset.ptab === tab.dataset.ptab);
+      });
+    });
+  });
+  const toggleBtn = document.getElementById('btn-panel-toggle');
+  const panelArea = document.getElementById('panel-area');
+  if (toggleBtn && panelArea) {
+    toggleBtn.addEventListener('click', () => {
+      panelArea.classList.toggle('collapsed');
+      toggleBtn.querySelector('svg').style.transform = panelArea.classList.contains('collapsed') ? 'rotate(180deg)' : '';
+      resizeCanvas();
+    });
+  }
+}
+
+// --- Dev log panel: lightweight timestamped log, mirrors VSCode's Output panel ---
+function logLine(text) {
+  const logEl = document.getElementById('dev-log');
+  if (!logEl) return;
+  const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  const line = document.createElement('div');
+  line.style.cssText = 'font-family: var(--font-family-mono); font-size: 11px; color: var(--text-muted); white-space: pre-wrap; padding: 1px 0;';
+  line.innerHTML = `<span style="color:var(--text)">[${time}]</span> ${text}`;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
 }
 
 // --- Themes (vscode-dark / vscode-light / arduino / cubemx) ---
@@ -69,6 +137,9 @@ function cssVar(name) {
 function applyTheme(theme) {
   document.body.dataset.theme = theme;
   document.querySelectorAll('.theme-select').forEach((s) => { s.value = theme; });
+  document.querySelectorAll('.theme-swatch').forEach((s) => {
+    s.classList.toggle('active', s.dataset.theme === theme);
+  });
   try { localStorage.setItem(THEME_KEY, theme); } catch (e) { /* ignore */ }
   if (typeof buildChannelList === 'function') {
     buildChannelList(); // 刷新通道色块以匹配新主题
@@ -81,6 +152,9 @@ function initTheme() {
   applyTheme(saved);
   document.querySelectorAll('.theme-select').forEach((s) => {
     s.addEventListener('change', () => applyTheme(s.value));
+  });
+  document.querySelectorAll('.theme-swatch').forEach((s) => {
+    s.addEventListener('click', () => applyTheme(s.dataset.theme));
   });
 }
 const CHANNEL_NAMES = (() => {
@@ -160,6 +234,10 @@ const el = {
   calibResult: document.getElementById('calib-result'),
   calibBars: document.getElementById('calib-bars'),
   calibExport: document.getElementById('btn-calib-export'),
+  calibSaveNvs: document.getElementById('btn-calib-save-nvs'),
+  calibResetNvs: document.getElementById('btn-calib-reset-nvs'),
+  calibSteps: document.getElementById('calib-steps'),
+  abConnect: document.getElementById('ab-connect'),
   statusDot: document.getElementById('status-dot'),
   statusText: document.getElementById('status-text'),
   timebase: document.getElementById('timebase'),
@@ -180,6 +258,9 @@ function setStatus(connected, text) {
   el.statusText.textContent = text;
   el.connect.disabled = connected;
   el.disconnect.disabled = !connected;
+  if (el.abConnect) {
+    el.abConnect.dataset.connected = connected ? 'true' : 'false';
+  }
 }
 
 function buildChannelList() {
@@ -629,21 +710,41 @@ function renderCalibResults() {
   el.calibResult.innerHTML = html;
 }
 
+// 步骤 1-4 对应 sidebar 的 .calib-steps 列表：done(已完成)/current(进行中)/未来步骤留白。
+function updateCalibSteps(activeStep) {
+  if (!el.calibSteps) return;
+  el.calibSteps.querySelectorAll('li').forEach((li) => {
+    const step = parseInt(li.dataset.step, 10);
+    li.classList.toggle('done', step < activeStep);
+    li.classList.toggle('current', step === activeStep);
+  });
+}
+
 function updateCalibUI() {
   const hasRange = calibration.max.some((v) => v != null);
+  const hasResults = !!(calibration.results && calibration.results.some((r) => r.ok));
   let text;
+  let step;
   if (calibRecording) {
     text = '正在检测量程… 请随机按下所有按键，覆盖每键从静止到按到底。';
+    step = 1;
   } else if (!hasRange) {
     text = '第 ① 步：点“按键量程检测”，然后随机按下所有按键。';
-  } else if (!calibration.results) {
+    step = 1;
+  } else if (!hasResults) {
     text = '第 ② 步：点“量程标定完成”。';
+    step = 2;
   } else {
     text = '第 ③ 步：确认触发行程/滞回区间，点“发送标定数值”。';
+    step = 3;
   }
   el.calibStatus.textContent = text;
   el.calibRecord.textContent = calibRecording ? '量程标定完成' : (hasRange ? '重新检测量程' : '按键量程检测');
-  el.calibSend.disabled = !(calibration.results && calibration.results.some((r) => r.ok));
+  el.calibSend.disabled = !hasResults;
+  if (el.calibSaveNvs) {
+    el.calibSaveNvs.disabled = !hasResults;
+  }
+  updateCalibSteps(step);
   renderCalibResults();
 }
 
@@ -687,28 +788,26 @@ function crc16(bytes, len) {
   return crc;
 }
 
-// 组装“设置每键阈值”命令帧（Issue D 主机→设备协议）：
-//   'M' 'K' | ver=3 | type=0x10(命令) | cmd=0x01(设置阈值) | len=96 |
-//   payload: 24 × (press:u16le, release:u16le) | crc16(对前 6+96 字节)
-function buildSetThresholdsFrame() {
-  const payloadLen = CHANNEL_COUNT * 4;
+// 命令操作码（须与 app/module/lib/hall_telemetry/hall_telemetry.c 保持一致）。
+const CMD_SET_THRESHOLDS = 0x01;
+const CMD_GET_THRESHOLDS = 0x02;
+const CMD_SAVE_NVS = 0x03;
+const CMD_RESET_DEFAULTS = 0x04;
+
+// 组装通用命令帧（主机→设备协议，Issue D）：
+//   'M' 'K' | ver=3 | type=0x10(命令) | cmd | len | payload(len) | crc16(对前 6+len 字节)
+function buildCommandFrame(cmd, payload) {
+  const payloadLen = payload ? payload.length : 0;
   const total = 6 + payloadLen + 2;
   const buf = new Uint8Array(total);
   buf[0] = 0x4d; // 'M'
   buf[1] = 0x4b; // 'K'
   buf[2] = 3;
   buf[3] = 0x10;
-  buf[4] = 0x01;
+  buf[4] = cmd;
   buf[5] = payloadLen;
-  for (let i = 0; i < CHANNEL_COUNT; i++) {
-    const r = calibration.results[i];
-    const press = r.ok ? Math.round(r.press) : 0;
-    const release = r.ok ? Math.round(r.release) : 0;
-    const o = 6 + i * 4;
-    buf[o] = press & 0xff;
-    buf[o + 1] = (press >> 8) & 0xff;
-    buf[o + 2] = release & 0xff;
-    buf[o + 3] = (release >> 8) & 0xff;
+  if (payloadLen > 0) {
+    buf.set(payload, 6);
   }
   const crc = crc16(buf, total - 2);
   buf[total - 2] = crc & 0xff;
@@ -716,24 +815,70 @@ function buildSetThresholdsFrame() {
   return buf;
 }
 
-async function sendCalibration() {
-  if (!calibration.results || !calibration.results.some((r) => r.ok)) {
-    alert('请先完成量程检测。');
-    return;
+// “设置每键阈值”命令：payload 为 24 × (press:u16le, release:u16le)，共 96 字节。
+function buildSetThresholdsFrame() {
+  const payload = new Uint8Array(CHANNEL_COUNT * 4);
+  for (let i = 0; i < CHANNEL_COUNT; i++) {
+    const r = calibration.results[i];
+    const press = r.ok ? Math.round(r.press) : 0;
+    const release = r.ok ? Math.round(r.release) : 0;
+    const o = i * 4;
+    payload[o] = press & 0xff;
+    payload[o + 1] = (press >> 8) & 0xff;
+    payload[o + 2] = release & 0xff;
+    payload[o + 3] = (release >> 8) & 0xff;
   }
-  const frame = buildSetThresholdsFrame();
+  return buildCommandFrame(CMD_SET_THRESHOLDS, payload);
+}
+
+// 统一的命令发送：写串口 + 写日志面板。真实设备会异步回一个 8 字节 `AK` ack
+// 帧（见 hall_telemetry.c 的 hall_cmd_send_ack），但当前 frame-worker.js 尚未
+// 解析该 ack（只解析 62 字节 `MK` 数据帧），所以这里先做“已发送”的乐观提示。
+async function sendCommandFrame(frame, label) {
   if (!state.port) {
-    alert('未连接真实设备。当前为演示/预览：固件端命令解析（Issue D）实现后，' +
-          '这里会经串口把每键阈值下发到设备。可先点“导出数据”保存标定结果。');
-    return;
+    logLine(`<span style="color:var(--warning)">未连接真实设备</span> — ${label} 仅为预览，未实际下发。`);
+    alert('未连接真实设备。当前为演示/预览：固件端命令协议已支持，连接设备后即可下发。可先点“导出数据”保存标定结果。');
+    return false;
   }
   try {
     const writer = state.port.writable.getWriter();
     await writer.write(frame);
     writer.releaseLock();
-    el.calibStatus.textContent = '已发送标定数值（需固件命令协议支持后生效）。';
+    logLine(`<span style="color:var(--ok)">已发送</span> ${label}（${frame.length} 字节）`);
+    return true;
   } catch (err) {
+    logLine(`<span style="color:var(--danger)">发送失败</span> ${label}: ${err.message}`);
     alert('发送失败: ' + err.message);
+    return false;
+  }
+}
+
+async function sendCalibration() {
+  if (!calibration.results || !calibration.results.some((r) => r.ok)) {
+    alert('请先完成量程检测。');
+    return;
+  }
+  const ok = await sendCommandFrame(buildSetThresholdsFrame(), 'SET_THRESHOLDS 设置每键阈值');
+  if (ok) {
+    el.calibStatus.textContent = '已发送标定数值。可点“保存到 NVS”使其掉电保留。';
+  }
+}
+
+async function saveThresholdsToNvs() {
+  if (!calibration.results || !calibration.results.some((r) => r.ok)) {
+    alert('请先完成量程检测并发送标定数值。');
+    return;
+  }
+  const ok = await sendCommandFrame(buildCommandFrame(CMD_SAVE_NVS), 'SAVE_NVS 保存到 NVS');
+  if (ok) {
+    el.calibStatus.textContent = '已请求保存到 NVS，掉电后阈值仍会保留。';
+  }
+}
+
+async function resetThresholdsToDefaults() {
+  const ok = await sendCommandFrame(buildCommandFrame(CMD_RESET_DEFAULTS), 'RESET_DEFAULTS 恢复默认阈值');
+  if (ok) {
+    el.calibStatus.textContent = '已请求恢复默认阈值（回退到 DT 全局阈值）。';
   }
 }
 
@@ -844,6 +989,9 @@ function startDemo() {
   el.statusText.textContent = '演示模式（模拟数据，无硬件）';
   el.connect.disabled = true;
   el.demo.textContent = '停止演示';
+  if (el.abConnect) {
+    el.abConnect.dataset.connected = 'true';
+  }
 }
 
 function stopDemo() {
@@ -856,6 +1004,9 @@ function stopDemo() {
   el.statusText.textContent = '未连接';
   el.connect.disabled = !('serial' in navigator);
   el.demo.textContent = '演示模式';
+  if (el.abConnect) {
+    el.abConnect.dataset.connected = 'false';
+  }
 }
 
 function toggleDemo() {
@@ -869,11 +1020,14 @@ function toggleDemo() {
 el.connect.addEventListener('click', connect);
 el.disconnect.addEventListener('click', disconnect);
 el.clear.addEventListener('click', clearAll);
+document.getElementById('btn-clear-icon').addEventListener('click', clearAll);
 el.exportBtn.addEventListener('click', exportCsv);
 el.demo.addEventListener('click', toggleDemo);
 el.calibRecord.addEventListener('click', toggleCalibRecording);
 el.calibSend.addEventListener('click', sendCalibration);
 el.calibExport.addEventListener('click', exportCalibJson);
+el.calibSaveNvs.addEventListener('click', saveThresholdsToNvs);
+el.calibResetNvs.addEventListener('click', resetThresholdsToDefaults);
 el.calibTrigger.addEventListener('change', () => {
   if (calibration.max.some((v) => v != null)) { computeCalibThresholds(); }
 });
@@ -884,12 +1038,16 @@ el.calibHoldAll.addEventListener('change', () => { demo.holdAll = el.calibHoldAl
 window.addEventListener('resize', resizeCanvas);
 
 initPanels();
+initSections();
+initSidebarResize();
+initBottomPanel();
 initTheme();
 buildChannelList();
 buildCalibBars();
 resizeCanvas();
 setStatus(false, '未连接');
 updateCalibUI();
+logLine('MegKnob Web Configurator 已就绪。点击左侧「连接」图标开始，或使用「演示模式」体验校准流程。');
 
 function animate() {
   drawWaveform();

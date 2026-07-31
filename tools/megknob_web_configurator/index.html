@@ -3,258 +3,643 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>MegKnob Web Configurator</title>
+<title>megknob-configurator — MegKnob Web Configurator</title>
 <style>
-  /* ===== Theme variables ===== */
+  /* =========================================================================
+   * Theme tokens
+   * 变量命名尽量对齐 VSCode 官方 Theme Color 参考（--vscode-<key>），
+   * 方便以后直接对照 https://code.visualstudio.com/api/references/theme-color
+   * ========================================================================= */
   :root {
     --font-family: -apple-system, "Segoe UI", "PingFang SC", sans-serif;
+    --font-family-mono: "SF Mono", "Consolas", "Menlo", monospace;
     --font-weight: 400;
     --font-weight-bold: 600;
+    --radius: 3px;
   }
+
   :root, [data-theme="vscode-dark"] {
-    --activity-bg: #333333; --sidebar-bg: #252526; --editor-bg: #1e1e1e;
-    --statusbar-bg: #007acc; --statusbar-text: #ffffff;
-    --border: #3c3c3c; --text: #cccccc; --text-muted: #858585;
-    --accent: #007fd4; --ok: #4ec9b0; --danger: #f48771; --warning: #cca700;
-    --input-bg: #3c3c3c; --grid: #2b2b2b; --canvas-bg: #181818;
-    --activity-icon: #858585; --activity-icon-active: #ffffff;
-    --statusbar-warn: #ffb3b3;
+    --titlebar-bg: #3c3c3c; --titlebar-text: #cccccc; --titlebar-inactive: #9b9b9b;
+    --activity-bg: #333333; --activity-icon: #ffffff; --activity-icon-inactive: #858585;
+    --activity-badge-bg: #007acc; --activity-badge-text: #fff;
+    --sidebar-bg: #252526; --sidebar-text: #cccccc; --sidebar-title: #bbbbbb;
+    --sidebar-section-header-bg: #2b2b2b;
+    --list-hover-bg: #2a2d2e; --list-active-bg: #37373d; --list-active-border: #007fd4;
+    --editor-bg: #1e1e1e; --editor-fg: #d4d4d4;
+    --editor-group-header-bg: #252526;
+    --tab-bg: #2d2d2d; --tab-active-bg: #1e1e1e; --tab-inactive-fg: #969696; --tab-active-fg: #ffffff;
+    --tab-active-border: #007fd4;
+    --breadcrumb-bg: #1e1e1e; --breadcrumb-fg: #cccccc80; --breadcrumb-fg-active: #cccccc;
+    --panel-bg: #1e1e1e; --panel-border: #3c3c3c; --panel-tab-active-fg: #ffffff;
+    --panel-tab-inactive-fg: #969696; --panel-tab-active-border: #e7e7e7;
+    --statusbar-bg: #007acc; --statusbar-text: #ffffff; --statusbar-hover-bg: #ffffff2b;
+    --border: #3c3c3c; --focus-border: #007fd4;
+    --text: #cccccc; --text-muted: #858585; --text-link: #3794ff;
+    --accent: #0e639c; --accent-hover: #1177bb; --accent-fg: #ffffff;
+    --ok: #4ec9b0; --danger: #f48771; --warning: #cca700;
+    --input-bg: #3c3c3c; --input-border: #3c3c3c; --input-placeholder: #a6a6a6;
+    --dropdown-bg: #3c3c3c;
+    --grid: #2b2b2b; --canvas-bg: #181818;
+    --scrollbar-thumb: #79797966; --scrollbar-thumb-hover: #646464b3;
+    --badge-bg: #4d4d4d; --badge-fg: #ffffff;
+    --statusbar-warn: #ffcc00;
     --track-bg: #3a3a3d; --cursor-color: #ffffff;
+    --kbd-bg: #ffffff1a; --kbd-border: #ffffff33;
   }
+
   [data-theme="vscode-light"] {
-    --activity-bg: #2c2c2c; --sidebar-bg: #f3f3f3; --editor-bg: #ffffff;
-    --statusbar-bg: #007acc; --statusbar-text: #ffffff;
-    --border: #e0e0e0; --text: #333333; --text-muted: #6f6f6f;
-    --accent: #007fd4; --ok: #16825d; --danger: #e51400; --warning: #bf8803;
-    --input-bg: #ffffff; --grid: #e6e6e6; --canvas-bg: #fafafa;
-    --activity-icon: #aaaaaa; --activity-icon-active: #ffffff;
-    --statusbar-warn: #ffd7d7;
+    --titlebar-bg: #dddddd; --titlebar-text: #333333; --titlebar-inactive: #6f6f6f;
+    --activity-bg: #2c2c2c; --activity-icon: #ffffff; --activity-icon-inactive: #b8b8b8;
+    --activity-badge-bg: #007acc; --activity-badge-text: #fff;
+    --sidebar-bg: #f3f3f3; --sidebar-text: #3b3b3b; --sidebar-title: #6f6f6f;
+    --sidebar-section-header-bg: #e8e8e8;
+    --list-hover-bg: #e8e8e8; --list-active-bg: #e4e6f1; --list-active-border: #007fd4;
+    --editor-bg: #ffffff; --editor-fg: #333333;
+    --editor-group-header-bg: #f3f3f3;
+    --tab-bg: #ececec; --tab-active-bg: #ffffff; --tab-inactive-fg: #6f6f6f; --tab-active-fg: #333333;
+    --tab-active-border: #007fd4;
+    --breadcrumb-bg: #ffffff; --breadcrumb-fg: #3b3b3b80; --breadcrumb-fg-active: #3b3b3b;
+    --panel-bg: #ffffff; --panel-border: #e0e0e0; --panel-tab-active-fg: #333333;
+    --panel-tab-inactive-fg: #6f6f6f; --panel-tab-active-border: #333333;
+    --statusbar-bg: #007acc; --statusbar-text: #ffffff; --statusbar-hover-bg: #ffffff2b;
+    --border: #e0e0e0; --focus-border: #007fd4;
+    --text: #333333; --text-muted: #6f6f6f; --text-link: #006ab1;
+    --accent: #007acc; --accent-hover: #0062a3; --accent-fg: #ffffff;
+    --ok: #16825d; --danger: #e51400; --warning: #bf8803;
+    --input-bg: #ffffff; --input-border: #cecece; --input-placeholder: #767676;
+    --dropdown-bg: #ffffff;
+    --grid: #e6e6e6; --canvas-bg: #fafafa;
+    --scrollbar-thumb: #64646466; --scrollbar-thumb-hover: #64646499;
+    --badge-bg: #c4c4c4; --badge-fg: #333333;
+    --statusbar-warn: #b06d00;
     --track-bg: #d5d5d5; --cursor-color: #222222;
+    --kbd-bg: #0000000f; --kbd-border: #00000022;
   }
+
   [data-theme="arduino"] {
-    --activity-bg: #00646a; --sidebar-bg: #f4f4f4; --editor-bg: #ffffff;
-    --statusbar-bg: #00979d; --statusbar-text: #ffffff;
-    --border: #d9d9d9; --text: #434343; --text-muted: #7a7a7a;
-    --accent: #00979d; --ok: #1b8a4c; --danger: #d33b3b; --warning: #c77d02;
-    --input-bg: #ffffff; --grid: #e9e9e9; --canvas-bg: #ffffff;
-    --activity-icon: #bfe6e8; --activity-icon-active: #ffffff;
-    --statusbar-warn: #ffe1e1;
+    --titlebar-bg: #00979d; --titlebar-text: #ffffff; --titlebar-inactive: #d7f2f3;
+    --activity-bg: #00646a; --activity-icon: #ffffff; --activity-icon-inactive: #bfe6e8;
+    --activity-badge-bg: #ff8400; --activity-badge-text: #fff;
+    --sidebar-bg: #f4f4f4; --sidebar-text: #434343; --sidebar-title: #00646a;
+    --sidebar-section-header-bg: #ebebeb;
+    --list-hover-bg: #e3f3f3; --list-active-bg: #d3ecec; --list-active-border: #00979d;
+    --editor-bg: #ffffff; --editor-fg: #434343;
+    --editor-group-header-bg: #f4f4f4;
+    --tab-bg: #ececec; --tab-active-bg: #ffffff; --tab-inactive-fg: #7a7a7a; --tab-active-fg: #00646a;
+    --tab-active-border: #00979d;
+    --breadcrumb-bg: #ffffff; --breadcrumb-fg: #43434380; --breadcrumb-fg-active: #434343;
+    --panel-bg: #ffffff; --panel-border: #d9d9d9; --panel-tab-active-fg: #00646a;
+    --panel-tab-inactive-fg: #7a7a7a; --panel-tab-active-border: #00979d;
+    --statusbar-bg: #00979d; --statusbar-text: #ffffff; --statusbar-hover-bg: #ffffff2b;
+    --border: #d9d9d9; --focus-border: #00979d;
+    --text: #434343; --text-muted: #7a7a7a; --text-link: #00646a;
+    --accent: #00979d; --accent-hover: #007b80; --accent-fg: #ffffff;
+    --ok: #1b8a4c; --danger: #d33b3b; --warning: #c77d02;
+    --input-bg: #ffffff; --input-border: #d9d9d9; --input-placeholder: #9a9a9a;
+    --dropdown-bg: #ffffff;
+    --grid: #e9e9e9; --canvas-bg: #ffffff;
+    --scrollbar-thumb: #00979d55; --scrollbar-thumb-hover: #00979d88;
+    --badge-bg: #ff8400; --badge-fg: #ffffff;
+    --statusbar-warn: #fff2d6;
     --track-bg: #d8d8d8; --cursor-color: #2a2a2a;
+    --kbd-bg: #0000000f; --kbd-border: #00000022;
   }
+
   [data-theme="cubemx"] {
-    --activity-bg: #03234b; --sidebar-bg: #f5f6f7; --editor-bg: #ffffff;
-    --statusbar-bg: #03234b; --statusbar-text: #ffffff;
-    --border: #d0d4d9; --text: #1f2d3d; --text-muted: #6b7684;
-    --accent: #0072c6; --ok: #1e9e50; --danger: #d13438; --warning: #ca5010;
-    --input-bg: #ffffff; --grid: #e7eaee; --canvas-bg: #ffffff;
-    --activity-icon: #9db6d6; --activity-icon-active: #ffffff;
-    --statusbar-warn: #ffc9c9;
+    --titlebar-bg: #03234b; --titlebar-text: #ffffff; --titlebar-inactive: #9db6d6;
+    --activity-bg: #03234b; --activity-icon: #ffffff; --activity-icon-inactive: #9db6d6;
+    --activity-badge-bg: #0072c6; --activity-badge-text: #fff;
+    --sidebar-bg: #f5f6f7; --sidebar-text: #1f2d3d; --sidebar-title: #4a5b70;
+    --sidebar-section-header-bg: #eceff2;
+    --list-hover-bg: #e6edf5; --list-active-bg: #d9e6f5; --list-active-border: #0072c6;
+    --editor-bg: #ffffff; --editor-fg: #1f2d3d;
+    --editor-group-header-bg: #f5f6f7;
+    --tab-bg: #eceff2; --tab-active-bg: #ffffff; --tab-inactive-fg: #6b7684; --tab-active-fg: #03234b;
+    --tab-active-border: #0072c6;
+    --breadcrumb-bg: #ffffff; --breadcrumb-fg: #1f2d3d80; --breadcrumb-fg-active: #1f2d3d;
+    --panel-bg: #ffffff; --panel-border: #d0d4d9; --panel-tab-active-fg: #03234b;
+    --panel-tab-inactive-fg: #6b7684; --panel-tab-active-border: #0072c6;
+    --statusbar-bg: #03234b; --statusbar-text: #ffffff; --statusbar-hover-bg: #ffffff2b;
+    --border: #d0d4d9; --focus-border: #0072c6;
+    --text: #1f2d3d; --text-muted: #6b7684; --text-link: #0072c6;
+    --accent: #0072c6; --accent-hover: #005a9e; --accent-fg: #ffffff;
+    --ok: #1e9e50; --danger: #d13438; --warning: #ca5010;
+    --input-bg: #ffffff; --input-border: #d0d4d9; --input-placeholder: #8b96a3;
+    --dropdown-bg: #ffffff;
+    --grid: #e7eaee; --canvas-bg: #ffffff;
+    --scrollbar-thumb: #03234b33; --scrollbar-thumb-hover: #03234b66;
+    --badge-bg: #0072c6; --badge-fg: #ffffff;
+    --statusbar-warn: #ffd9a0;
     --track-bg: #d0d4d9; --cursor-color: #1f2d3d;
+    --kbd-bg: #0000000f; --kbd-border: #00000022;
   }
+
   [data-theme="eva"] {
-    --activity-bg: #1c1c1e; --sidebar-bg: #161617; --editor-bg: #0e0e10;
-    --statusbar-bg: #5b2a86; --statusbar-text: #e6ffd6;
-    --border: #2c2c30; --text: #dcdce0; --text-muted: #8e8e96;
-    --accent: #7cff00; --ok: #7cff00; --danger: #ff453a; --warning: #ff9f0a;
-    --input-bg: #1e1e22; --grid: #232327; --canvas-bg: #0a0a0c;
-    --activity-icon: #8e8e96; --activity-icon-active: #7cff00;
+    --titlebar-bg: #141416; --titlebar-text: #dcdce0; --titlebar-inactive: #6e6e76;
+    --activity-bg: #1c1c1e; --activity-icon: #7cff00; --activity-icon-inactive: #6e6e76;
+    --activity-badge-bg: #ff453a; --activity-badge-text: #0e0e10;
+    --sidebar-bg: #161617; --sidebar-text: #dcdce0; --sidebar-title: #8e8e96;
+    --sidebar-section-header-bg: #1c1c1e;
+    --list-hover-bg: #222225; --list-active-bg: #26261f; --list-active-border: #7cff00;
+    --editor-bg: #0e0e10; --editor-fg: #dcdce0;
+    --editor-group-header-bg: #161617;
+    --tab-bg: #1a1a1c; --tab-active-bg: #0e0e10; --tab-inactive-fg: #8e8e96; --tab-active-fg: #7cff00;
+    --tab-active-border: #7cff00;
+    --breadcrumb-bg: #0e0e10; --breadcrumb-fg: #dcdce080; --breadcrumb-fg-active: #dcdce0;
+    --panel-bg: #0e0e10; --panel-border: #2c2c30; --panel-tab-active-fg: #7cff00;
+    --panel-tab-inactive-fg: #8e8e96; --panel-tab-active-border: #7cff00;
+    --statusbar-bg: #5b2a86; --statusbar-text: #e6ffd6; --statusbar-hover-bg: #ffffff2b;
+    --border: #2c2c30; --focus-border: #7cff00;
+    --text: #dcdce0; --text-muted: #8e8e96; --text-link: #7cff00;
+    --accent: #5b2a86; --accent-hover: #6f34a3; --accent-fg: #e6ffd6;
+    --ok: #7cff00; --danger: #ff453a; --warning: #ff9f0a;
+    --input-bg: #1e1e22; --input-border: #2c2c30; --input-placeholder: #6e6e76;
+    --dropdown-bg: #1e1e22;
+    --grid: #232327; --canvas-bg: #0a0a0c;
+    --scrollbar-thumb: #7cff0044; --scrollbar-thumb-hover: #7cff0077;
+    --badge-bg: #ff453a; --badge-fg: #0e0e10;
     --statusbar-warn: #ffd60a;
     --track-bg: #2c2c30; --cursor-color: #7cff00;
+    --kbd-bg: #7cff0022; --kbd-border: #7cff0055;
     --font-family: "Songti SC", "STSong", "SimSun", "Noto Serif CJK SC", "Source Han Serif SC", serif;
     --font-weight: 700;
     --font-weight-bold: 800;
   }
 
-  /* ===== Base / layout ===== */
+  /* ========================================================================= */
+
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
     display: flex; flex-direction: column; height: 100vh; overflow: hidden;
     background: var(--editor-bg); color: var(--text);
     font-family: var(--font-family); font-weight: var(--font-weight); font-size: 13px;
+    -webkit-font-smoothing: antialiased;
   }
-  .app { display: flex; flex: 1; min-height: 0; }
+  svg { display: block; }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 0; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  /* ===== Title bar ===== */
+  .title-bar {
+    height: 30px; flex-shrink: 0; background: var(--titlebar-bg); color: var(--titlebar-text);
+    display: flex; align-items: center; padding: 0 10px; font-size: 12px;
+    -webkit-app-region: drag; user-select: none;
+  }
+  .title-bar .tb-menu { display: flex; gap: 2px; }
+  .title-bar .tb-menu span { padding: 4px 8px; border-radius: var(--radius); color: var(--titlebar-inactive); cursor: default; }
+  .title-bar .tb-menu span:hover { background: #ffffff1a; color: var(--titlebar-text); }
+  .title-bar .tb-title { flex: 1; text-align: center; color: var(--titlebar-inactive); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .title-bar .tb-title b { color: var(--titlebar-text); font-weight: var(--font-weight-bold); }
+
+  .workbench { display: flex; flex: 1; min-height: 0; }
 
   /* ===== Activity bar ===== */
   .activity-bar {
     width: 48px; flex-shrink: 0; background: var(--activity-bg);
     display: flex; flex-direction: column; align-items: stretch; padding: 4px 0;
   }
-  .activity-bar button {
-    height: 48px; border: none; background: none; cursor: pointer;
-    color: var(--activity-icon); position: relative; opacity: .65; padding: 0;
-    display: flex; align-items: center; justify-content: center;
+  .activity-bar .ab-item {
+    height: 48px; border: none; background: none; cursor: pointer; padding: 0;
+    display: flex; align-items: center; justify-content: center; position: relative;
+    color: var(--activity-icon-inactive);
   }
-  .activity-bar button span {
-    writing-mode: vertical-rl; font-size: 13px; letter-spacing: 3px;
-    font-weight: var(--font-weight-bold);
+  .activity-bar .ab-item svg { width: 24px; height: 24px; }
+  .activity-bar .ab-item:hover { color: var(--activity-icon); }
+  .activity-bar .ab-item.active { color: var(--activity-icon); }
+  .activity-bar .ab-item.active::before {
+    content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px; background: var(--activity-icon);
   }
-  .activity-bar button:hover { opacity: 1; }
-  .activity-bar button.active { color: var(--activity-icon-active); opacity: 1; }
-  .activity-bar button.active::before {
-    content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px; background: var(--accent);
+  .activity-bar .ab-item .badge {
+    position: absolute; right: 6px; top: 6px; min-width: 16px; height: 16px; border-radius: 8px;
+    background: var(--activity-badge-bg); color: var(--activity-badge-text); font-size: 9px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; padding: 0 3px; line-height: 1;
+  }
+  .activity-bar .ab-item[data-connected="true"]::after {
+    content: ''; position: absolute; right: 7px; bottom: 9px; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--ok); box-shadow: 0 0 0 2px var(--activity-bg);
   }
   .activity-bar .spacer { flex: 1; }
 
   /* ===== Sidebar ===== */
   .sidebar {
-    width: 320px; flex-shrink: 0; background: var(--sidebar-bg);
-    border-right: 1px solid var(--border); overflow-y: auto;
+    width: 300px; flex-shrink: 0; background: var(--sidebar-bg); color: var(--sidebar-text);
+    display: flex; flex-direction: column; min-width: 170px; max-width: 480px; position: relative;
   }
-  .panel-view { display: none; padding: 12px; }
-  .panel-view.active { display: block; }
-  .panel-view h2 {
-    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
-    color: var(--text-muted); margin: 0 0 10px;
+  .sidebar-resize { position: absolute; right: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 5; }
+  .sidebar-title {
+    height: 35px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px 0 20px; font-size: 11px; font-weight: var(--font-weight-bold); letter-spacing: .4px;
+    text-transform: uppercase; color: var(--sidebar-title);
   }
-  .panel-view h3 { font-size: 12px; color: var(--text); margin: 16px 0 6px; }
-  .hint { font-size: 11px; color: var(--text-muted); line-height: 1.55; margin: 4px 0; }
+  .sidebar-title .actions { display: flex; gap: 4px; }
+  .sidebar-title .actions button {
+    background: none; border: none; color: var(--sidebar-title); cursor: pointer; padding: 2px; border-radius: var(--radius);
+    display: flex; align-items: center;
+  }
+  .sidebar-title .actions button:hover { background: var(--list-hover-bg); }
+  .sidebar-title .actions svg { width: 16px; height: 16px; }
+  .sidebar-body { flex: 1; overflow-y: auto; overflow-x: hidden; }
 
-  /* ===== Editor ===== */
-  .editor { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--editor-bg); }
+  .panel-view { display: none; }
+  .panel-view.active { display: block; }
+
+  /* Collapsible section, VSCode Explorer-style */
+  .sec { border-bottom: none; }
+  .sec-header {
+    height: 22px; display: flex; align-items: center; gap: 4px; padding: 0 8px 0 4px; cursor: pointer;
+    font-size: 11px; font-weight: var(--font-weight-bold); text-transform: uppercase; letter-spacing: .3px;
+    color: var(--sidebar-text); background: var(--sidebar-bg); user-select: none;
+  }
+  .sec-header:hover { background: var(--list-hover-bg); }
+  .sec-header .chevron { width: 16px; height: 16px; flex-shrink: 0; transition: transform .1s ease; color: var(--sidebar-text); }
+  .sec.collapsed .sec-header .chevron { transform: rotate(-90deg); }
+  .sec-header .count { margin-left: auto; color: var(--text-muted); font-weight: 400; text-transform: none; }
+  .sec-body { padding: 4px 12px 12px 12px; }
+  .sec.collapsed .sec-body { display: none; }
+
+  .hint { font-size: 11.5px; color: var(--text-muted); line-height: 1.6; margin: 4px 0; }
+  .hint kbd {
+    background: var(--kbd-bg); border: 1px solid var(--kbd-border); border-radius: 3px;
+    padding: 0 4px; font-family: var(--font-family-mono); font-size: 10.5px;
+  }
+  .field-label { font-size: 11px; color: var(--text-muted); margin: 10px 0 4px; text-transform: uppercase; letter-spacing: .3px; }
+
+  /* ===== Editor group ===== */
+  .editor-group { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--editor-bg); }
+
+  .tabs-bar { display: flex; background: var(--editor-group-header-bg); flex-shrink: 0; overflow-x: auto; }
+  .tab {
+    display: flex; align-items: center; gap: 7px; height: 35px; padding: 0 12px; font-size: 13px;
+    background: var(--tab-bg); color: var(--tab-inactive-fg); border-right: 1px solid var(--border);
+    cursor: pointer; white-space: nowrap; position: relative; user-select: none;
+  }
+  .tab .tab-icon { width: 15px; height: 15px; flex-shrink: 0; }
+  .tab.active { background: var(--tab-active-bg); color: var(--tab-active-fg); }
+  .tab.active::after { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 1px; background: var(--tab-active-border); }
+  .tab .tab-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--tab-inactive-fg); flex-shrink: 0; }
+  .tab.active .tab-dot { background: var(--ok); }
+
+  .breadcrumbs {
+    height: 22px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; padding: 0 10px;
+    background: var(--breadcrumb-bg); color: var(--breadcrumb-fg); font-size: 12px; border-bottom: 1px solid transparent;
+  }
+  .breadcrumbs .crumb { cursor: default; }
+  .breadcrumbs .crumb.active { color: var(--breadcrumb-fg-active); }
+  .breadcrumbs .sep { color: var(--breadcrumb-fg); opacity: .6; }
+
   .editor-toolbar {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
     padding: 6px 12px; border-bottom: 1px solid var(--border);
   }
-  .editor-title { font-weight: 600; margin-right: auto; }
+  .editor-title { font-weight: var(--font-weight-bold); margin-right: auto; color: var(--text-muted); font-size: 12px; }
   .editor-toolbar label { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
-  #wave-canvas { flex: 1; min-height: 0; width: 100%; background: var(--canvas-bg); display: block; }
+
+  .editor-canvas-wrap { flex: 1; min-height: 0; position: relative; }
+  #wave-canvas { width: 100%; height: 100%; background: var(--canvas-bg); display: block; }
+  .canvas-overlay-legend {
+    position: absolute; top: 8px; right: 12px; font-size: 10px; color: var(--text-muted);
+    background: var(--editor-bg); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 4px 6px; opacity: .85; pointer-events: none;
+  }
+
+  /* ===== Bottom panel (results / log), VSCode Terminal/Problems style ===== */
+  .panel-area { flex-shrink: 0; background: var(--panel-bg); border-top: 1px solid var(--panel-border); display: flex; flex-direction: column; }
+  .panel-area.collapsed .panel-body { display: none; }
+  .panel-tabs {
+    height: 35px; flex-shrink: 0; display: flex; align-items: center; padding: 0 8px; gap: 2px;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  .panel-tab {
+    height: 100%; display: flex; align-items: center; padding: 0 10px; font-size: 11px; font-weight: var(--font-weight-bold);
+    text-transform: uppercase; letter-spacing: .3px; color: var(--panel-tab-inactive-fg); cursor: pointer;
+    border-bottom: 1px solid transparent; position: relative;
+  }
+  .panel-tab.active { color: var(--panel-tab-active-fg); border-bottom-color: var(--panel-tab-active-border); }
+  .panel-tabs .spacer { flex: 1; }
+  .panel-tabs .panel-actions { display: flex; gap: 2px; }
+  .panel-tabs .panel-actions button {
+    background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; border-radius: var(--radius);
+    display: flex; align-items: center;
+  }
+  .panel-tabs .panel-actions button:hover { background: var(--list-hover-bg); color: var(--text); }
+  .panel-tabs .panel-actions svg { width: 15px; height: 15px; }
+  .panel-body { height: 220px; overflow: auto; padding: 8px 14px; }
+  .panel-view-inner { display: none; }
+  .panel-view-inner.active { display: block; }
 
   /* ===== Controls ===== */
   button, select, input {
-    background: var(--input-bg); border: 1px solid var(--border); color: var(--text);
-    border-radius: 3px; padding: 4px 8px; font-size: 12px; font-family: inherit;
+    background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text);
+    border-radius: var(--radius); padding: 4px 8px; font-size: 12px; font-family: inherit;
   }
   button { cursor: pointer; }
-  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:hover:not(:disabled) { border-color: var(--focus-border); }
   button:disabled { opacity: .4; cursor: not-allowed; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #ffffff; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: var(--font-weight-bold); }
+  button.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+  input:focus, select:focus, button:focus-visible { outline: 1px solid var(--focus-border); outline-offset: -1px; }
+  ::placeholder { color: var(--input-placeholder); }
 
   /* ===== Channel list ===== */
   .channel-row {
     display: grid; grid-template-columns: 18px 1fr 52px 46px; align-items: center;
-    gap: 6px; padding: 3px 0; font-size: 12px; border-bottom: 1px solid var(--border);
+    gap: 6px; padding: 3px 4px; font-size: 12px; border-radius: var(--radius);
   }
+  .channel-row:hover { background: var(--list-hover-bg); }
   .channel-row .swatch { width: 10px; height: 10px; border-radius: 2px; }
-  .channel-row .val { text-align: right; font-variant-numeric: tabular-nums; }
-  .channel-row .minmax { text-align: right; color: var(--text-muted); font-size: 10px; }
+  .channel-row .val { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--font-family-mono); }
+  .channel-row .minmax { text-align: right; color: var(--text-muted); font-size: 10px; font-family: var(--font-family-mono); }
 
   /* ===== Calibration ===== */
-  .calib-status { font-size: 12px; color: var(--accent); margin-bottom: 8px; min-height: 16px; }
-  .calib-params { display: flex; gap: 12px; font-size: 12px; margin-bottom: 6px; color: var(--text-muted); }
-  .calib-params input { width: 52px; padding: 3px 6px; }
+  .calib-steps { list-style: none; margin: 4px 0 10px; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .calib-steps li {
+    display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); padding: 3px 4px; border-radius: var(--radius);
+  }
+  .calib-steps li .num {
+    width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--text-muted); flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 9px;
+  }
+  .calib-steps li.current { color: var(--text); background: var(--list-active-bg); }
+  .calib-steps li.current .num { border-color: var(--accent); background: var(--accent); color: var(--accent-fg); }
+  .calib-steps li.done .num { border-color: var(--ok); background: var(--ok); color: var(--editor-bg); }
+  .calib-steps li.done { color: var(--text-muted); text-decoration: line-through; text-decoration-color: var(--border); }
+
+  .calib-status {
+    font-size: 12px; color: var(--text); margin-bottom: 8px; min-height: 32px; line-height: 1.5;
+    background: var(--list-hover-bg); border-left: 2px solid var(--accent); padding: 6px 8px; border-radius: 0 var(--radius) var(--radius) 0;
+  }
+  .calib-params { display: flex; gap: 12px; font-size: 12px; margin-bottom: 6px; color: var(--text-muted); flex-wrap: wrap; }
+  .calib-params label { display: flex; align-items: center; gap: 6px; }
+  .calib-params input { width: 56px; padding: 3px 6px; font-family: var(--font-family-mono); }
   .calib-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
   .calib-hold { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); margin: 6px 0; }
-  .calib-result { max-height: 300px; overflow: auto; margin-top: 6px; }
-  .calib-table { width: 100%; border-collapse: collapse; font-size: 11px; }
-  .calib-table th, .calib-table td { text-align: right; padding: 2px 4px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+  .calib-table { width: 100%; border-collapse: collapse; font-size: 11px; font-family: var(--font-family-mono); }
+  .calib-table th, .calib-table td { text-align: right; padding: 3px 6px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+  .calib-table th { color: var(--text-muted); font-family: var(--font-family); font-weight: var(--font-weight-bold); text-transform: uppercase; font-size: 10px; letter-spacing: .3px; }
   .calib-table th:first-child, .calib-table td:first-child { text-align: left; }
-  .calib-table tr.warn td { color: var(--warning); }
-  .calib-table tr.bad td { color: var(--danger); }
-  .calib-empty { color: var(--text-muted); font-size: 12px; }
+  .calib-table tbody tr:hover { background: var(--list-hover-bg); }
+  .calib-table tr.warn td:first-child::before { content: '● '; color: var(--warning); }
+  .calib-table tr.bad td:first-child::before { content: '● '; color: var(--danger); }
+  .calib-table tr:not(.warn):not(.bad) td:first-child::before { content: '● '; color: var(--ok); }
+  .calib-empty { color: var(--text-muted); font-size: 12px; padding: 20px 0; text-align: center; }
 
-  /* 校准竖条：每通道一条，实时游标 + 静止/满行程/触发/释放标记 */
   .calbars { display: flex; gap: 3px; margin: 8px 0 4px; align-items: flex-end; }
   .calbar { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; }
   .calbar-track { position: relative; width: 100%; height: 150px; background: var(--track-bg); border-radius: 2px; overflow: hidden; }
-  .calbar-range { position: absolute; left: 0; right: 0; background: var(--accent); opacity: .4; }
+  .calbar-range { position: absolute; left: 0; right: 0; background: var(--accent); opacity: .45; }
   .calbar-line { position: absolute; left: 0; right: 0; height: 2px; }
   .calbar-mark-baseline { background: var(--text); }
   .calbar-mark-press { background: var(--warning); }
   .calbar-mark-release { background: var(--ok); }
   .calbar-cursor { position: absolute; left: -1px; right: -1px; height: 2px; background: var(--cursor-color); box-shadow: 0 0 2px var(--cursor-color); }
-  .calbar-name { font-size: 9px; color: var(--text-muted); writing-mode: vertical-rl; height: 30px; }
+  .calbar-name { font-size: 9px; color: var(--text-muted); writing-mode: vertical-rl; height: 30px; font-family: var(--font-family-mono); }
 
   /* ===== Settings ===== */
-  .setting-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); }
+  .setting-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); justify-content: space-between; margin: 6px 0; }
+  .setting-row select { min-width: 140px; }
+  .theme-swatches { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0; }
+  .theme-swatch { border: 2px solid var(--border); border-radius: var(--radius); padding: 6px; cursor: pointer; text-align: center; font-size: 10px; color: var(--text-muted); }
+  .theme-swatch.active { border-color: var(--accent); color: var(--text); }
+  .theme-swatch .dots { display: flex; justify-content: center; gap: 3px; margin-bottom: 4px; }
+  .theme-swatch .dots span { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 
   /* ===== Status bar ===== */
   .status-bar {
-    height: 26px; flex-shrink: 0; background: var(--statusbar-bg); color: var(--statusbar-text);
-    display: flex; align-items: center; gap: 14px; padding: 0 12px; font-size: 11px;
+    height: 22px; flex-shrink: 0; background: var(--statusbar-bg); color: var(--statusbar-text);
+    display: flex; align-items: center; padding: 0 2px; font-size: 12px;
   }
-  .status-bar .sb-item { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .status-bar .sb-item {
+    display: flex; align-items: center; gap: 5px; white-space: nowrap; height: 100%; padding: 0 6px; cursor: default;
+  }
+  .status-bar button.sb-item { background: none; border: none; color: inherit; font: inherit; border-radius: 0; }
+  .status-bar button.sb-item:hover { background: var(--statusbar-hover-bg); }
+  .status-bar .sb-item svg { width: 14px; height: 14px; }
   .status-bar .spacer { flex: 1; }
   .status-bar select {
-    background: rgba(255,255,255,.16); color: var(--statusbar-text);
-    border: none; font-size: 11px; padding: 1px 4px;
+    background: transparent; color: var(--statusbar-text);
+    border: none; font-size: 12px; padding: 1px 4px; border-radius: 0; height: 100%;
   }
   .status-bar select option { color: #222; }
-  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); display: inline-block; }
-  .status-dot.connected { background: var(--ok); }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block; opacity: .5; }
+  .status-dot.connected { opacity: 1; }
   .status-bar .warn { color: var(--statusbar-warn); font-weight: 700; }
 </style>
 </head>
 <body data-theme="vscode-dark">
-  <div class="app">
-    <!-- Activity bar: click an icon to switch the sidebar panel. -->
+
+  <!-- Title bar -->
+  <div class="title-bar">
+    <div class="tb-menu">
+      <span>文件</span><span>编辑</span><span>查看</span><span>连接</span><span>帮助</span>
+    </div>
+    <div class="tb-title"><b>megknob-configurator</b> — MegKnob Web Configurator</div>
+    <div class="tb-menu" aria-hidden="true" style="visibility:hidden"><span>文件</span><span>编辑</span><span>查看</span></div>
+  </div>
+
+  <div class="workbench">
+    <!-- Activity bar -->
     <aside class="activity-bar" id="activity-bar">
-      <button data-panel="monitor" class="active" title="波形监视"><span>监视</span></button>
-      <button data-panel="calibrate" title="逐键校准"><span>校准</span></button>
-      <button data-panel="connect" title="连接"><span>连接</span></button>
+      <button class="ab-item active" data-panel="monitor" title="波形监视 (⇧⌘M)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 13h3l2-7 4 14 3-10 2 6h6"/></svg>
+      </button>
+      <button class="ab-item" data-panel="calibrate" title="逐键校准">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+      </button>
+      <button class="ab-item" data-panel="connect" title="连接设备" id="ab-connect">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 9V6a2 2 0 0 1 2-2h1M18 9V6a2 2 0 0 0-2-2h-1"/><rect x="4" y="9" width="16" height="10" rx="1.5"/><path d="M9 13.5h.01M15 13.5h.01"/></svg>
+      </button>
       <div class="spacer"></div>
-      <button data-panel="settings" title="设置"><span>设置</span></button>
+      <button class="ab-item" data-panel="settings" title="设置">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
     </aside>
 
-    <!-- Sidebar: one .panel-view per tool, only the active one is shown. -->
+    <!-- Sidebar -->
     <aside class="sidebar" id="sidebar">
+      <div class="sidebar-resize" id="sidebar-resize"></div>
+
+      <!-- 监视面板 -->
       <section class="panel-view active" data-panel="monitor">
-        <h2>通道监视</h2>
-        <div id="channels"></div>
+        <div class="sidebar-title">
+          <span id="sidebar-title-text">通道监视</span>
+          <span class="actions">
+            <button title="清屏" id="btn-clear-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>
+            </button>
+          </span>
+        </div>
+        <div class="sidebar-body">
+          <div class="sec" data-sec="scope">
+            <div class="sec-header">
+              <svg class="chevron" viewBox="0 0 16 16" fill="currentColor"><path d="M6 4l4 4-4 4V4z"/></svg>
+              <span>示波器</span>
+            </div>
+            <div class="sec-body">
+              <div class="hint">时基、量程与导出，见右侧编辑区顶部工具栏。</div>
+            </div>
+          </div>
+          <div class="sec" data-sec="channels">
+            <div class="sec-header">
+              <svg class="chevron" viewBox="0 0 16 16" fill="currentColor"><path d="M6 4l4 4-4 4V4z"/></svg>
+              <span>通道</span><span class="count">24</span>
+            </div>
+            <div class="sec-body" id="channels"></div>
+          </div>
+        </div>
       </section>
 
+      <!-- 校准面板 -->
       <section class="panel-view" data-panel="calibrate">
-        <h2>逐键校准</h2>
-        <div class="calib-status" id="calib-status"></div>
-        <div class="calbars" id="calib-bars"></div>
-        <div class="calib-actions">
-          <button id="btn-calib-record">按键量程检测</button>
+        <div class="sidebar-title"><span>逐键校准</span></div>
+        <div class="sidebar-body">
+          <div class="sec" data-sec="calib-flow">
+            <div class="sec-header">
+              <svg class="chevron" viewBox="0 0 16 16" fill="currentColor"><path d="M6 4l4 4-4 4V4z"/></svg>
+              <span>流程</span>
+            </div>
+            <div class="sec-body">
+              <ol class="calib-steps" id="calib-steps">
+                <li class="current" data-step="1"><span class="num">1</span>按键量程检测</li>
+                <li data-step="2"><span class="num">2</span>量程标定完成</li>
+                <li data-step="3"><span class="num">3</span>设定触发/滞回参数</li>
+                <li data-step="4"><span class="num">4</span>发送标定数值</li>
+              </ol>
+              <div class="calib-status" id="calib-status"></div>
+              <div class="calib-actions">
+                <button id="btn-calib-record" class="primary">按键量程检测</button>
+              </div>
+              <div class="field-label">阈值参数</div>
+              <div class="calib-params">
+                <label>触发行程 <input id="calib-trigger" type="number" value="0.1" min="0" max="1" step="0.01" /></label>
+                <label>滞回区间 <input id="calib-hysteresis" type="number" value="0.1" min="0" max="1" step="0.01" /></label>
+              </div>
+              <div class="calib-actions">
+                <button id="btn-calib-send" class="primary" disabled>发送标定数值</button>
+                <button id="btn-calib-export">导出数据</button>
+              </div>
+              <div class="field-label">设备存储</div>
+              <div class="calib-actions">
+                <button id="btn-calib-save-nvs" disabled>保存到 NVS</button>
+                <button id="btn-calib-reset-nvs">恢复默认</button>
+              </div>
+              <label class="calib-hold"><input type="checkbox" id="calib-hold-all" /> 演示：按住全部</label>
+            </div>
+          </div>
+          <div class="sec" data-sec="calib-visual">
+            <div class="sec-header">
+              <svg class="chevron" viewBox="0 0 16 16" fill="currentColor"><path d="M6 4l4 4-4 4V4z"/></svg>
+              <span>可视化</span><span class="count">24</span>
+            </div>
+            <div class="sec-body">
+              <div class="calbars" id="calib-bars"></div>
+              <div class="hint">灰色轨道 0–3.3V；蓝色为已标定量程；白线=静止基准，黄线=触发点，绿线=释放点。</div>
+            </div>
+          </div>
         </div>
-        <div class="calib-params">
-          <label>触发行程 <input id="calib-trigger" type="number" value="0.1" min="0" max="1" step="0.01" /></label>
-          <label>滞回区间 <input id="calib-hysteresis" type="number" value="0.1" min="0" max="1" step="0.01" /></label>
-        </div>
-        <div class="calib-actions">
-          <button id="btn-calib-send" class="primary" disabled>发送标定数值</button>
-          <button id="btn-calib-export">导出数据</button>
-        </div>
-        <label class="calib-hold"><input type="checkbox" id="calib-hold-all" /> 演示：按住全部</label>
-        <div class="calib-result" id="calib-result"></div>
       </section>
 
+      <!-- 连接面板 -->
       <section class="panel-view" data-panel="connect">
-        <h2>连接</h2>
-        <div class="calib-actions">
-          <button id="btn-connect" class="primary">连接设备</button>
-          <button id="btn-disconnect" disabled>断开</button>
+        <div class="sidebar-title"><span>连接</span></div>
+        <div class="sidebar-body">
+          <div class="sec" data-sec="conn-actions">
+            <div class="sec-header">
+              <svg class="chevron" viewBox="0 0 16 16" fill="currentColor"><path d="M6 4l4 4-4 4V4z"/></svg>
+              <span>设备</span>
+            </div>
+            <div class="sec-body">
+              <div class="calib-actions">
+                <button id="btn-connect" class="primary">连接设备</button>
+                <button id="btn-disconnect" disabled>断开</button>
+              </div>
+              <div class="calib-actions">
+                <button id="btn-demo">演示模式</button>
+              </div>
+            </div>
+          </div>
+          <div class="sec" data-sec="conn-help">
+            <div class="sec-header">
+              <svg class="chevron" viewBox="0 0 16 16" fill="currentColor"><path d="M6 4l4 4-4 4V4z"/></svg>
+              <span>说明</span>
+            </div>
+            <div class="sec-body">
+              <p class="hint">仅支持 Chrome / Edge（Web Serial）。HID 走 BLE（无线）或 USB HID；波形/遥测走 USB CDC ACM，需插 USB 线。</p>
+            </div>
+          </div>
+          <div class="sec" data-sec="conn-protocol">
+            <div class="sec-header">
+              <svg class="chevron" viewBox="0 0 16 16" fill="currentColor"><path d="M6 4l4 4-4 4V4z"/></svg>
+              <span>协议</span>
+            </div>
+            <div class="sec-body">
+              <p class="hint">数据帧 <kbd>v3</kbd> · 62 字节 · <kbd>CRC-16/CCITT-FALSE</kbd> · 24 通道 mV<br/>
+              命令帧 <kbd>MK</kbd> Magic · 104 字节 · <kbd>SET_THRESHOLDS 0x01</kbd> / <kbd>SAVE_NVS 0x03</kbd> / <kbd>RESET_DEFAULTS 0x04</kbd></p>
+            </div>
+          </div>
         </div>
-        <div class="calib-actions">
-          <button id="btn-demo">演示模式</button>
-        </div>
-        <h3>说明</h3>
-        <p class="hint">仅支持 Chrome / Edge（Web Serial）。HID 走 BLE（无线）或 USB HID；波形/遥测走 USB CDC ACM，需插 USB 线。</p>
-        <h3>协议</h3>
-        <p class="hint">v3 · 62-byte 帧 · CRC-16/CCITT-FALSE · 24 通道 mV · 采样与阈值计算在网页端完成</p>
       </section>
 
+      <!-- 设置面板 -->
       <section class="panel-view" data-panel="settings">
-        <h2>设置</h2>
-        <label class="setting-row">主题
-          <select class="theme-select">
-            <option value="vscode-dark">VSCode Dark</option>
-            <option value="vscode-light">VSCode Light</option>
-            <option value="arduino">Arduino</option>
-            <option value="cubemx">CubeMX</option>
-            <option value="eva">EVA</option>
-          </select>
-        </label>
-        <h3>插件</h3>
-        <p class="hint">面板采用注册式结构。后续可新增：参数读写（Issue D）、触发点、Rapid Trigger、RGB、OLED 状态等插件面板，加一项即出一栏。</p>
+        <div class="sidebar-title"><span>设置</span></div>
+        <div class="sidebar-body">
+          <div class="sec" data-sec="set-theme">
+            <div class="sec-header">
+              <svg class="chevron" viewBox="0 0 16 16" fill="currentColor"><path d="M6 4l4 4-4 4V4z"/></svg>
+              <span>颜色主题</span>
+            </div>
+            <div class="sec-body">
+              <div class="theme-swatches" id="theme-swatches">
+                <div class="theme-swatch" data-theme="vscode-dark"><div class="dots"><span style="background:#1e1e1e"></span><span style="background:#007acc"></span><span style="background:#cccccc"></span></div>VSCode Dark</div>
+                <div class="theme-swatch" data-theme="vscode-light"><div class="dots"><span style="background:#ffffff;border:1px solid #ccc"></span><span style="background:#007acc"></span><span style="background:#333"></span></div>VSCode Light</div>
+                <div class="theme-swatch" data-theme="arduino"><div class="dots"><span style="background:#ffffff;border:1px solid #ccc"></span><span style="background:#00979d"></span><span style="background:#434343"></span></div>Arduino</div>
+                <div class="theme-swatch" data-theme="cubemx"><div class="dots"><span style="background:#ffffff;border:1px solid #ccc"></span><span style="background:#0072c6"></span><span style="background:#03234b"></span></div>CubeMX</div>
+                <div class="theme-swatch" data-theme="eva"><div class="dots"><span style="background:#0e0e10"></span><span style="background:#5b2a86"></span><span style="background:#7cff00"></span></div>EVA</div>
+              </div>
+              <label class="setting-row">下拉选择
+                <select class="theme-select">
+                  <option value="vscode-dark">VSCode Dark</option>
+                  <option value="vscode-light">VSCode Light</option>
+                  <option value="arduino">Arduino</option>
+                  <option value="cubemx">CubeMX</option>
+                  <option value="eva">EVA</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <div class="sec" data-sec="set-plugins">
+            <div class="sec-header">
+              <svg class="chevron" viewBox="0 0 16 16" fill="currentColor"><path d="M6 4l4 4-4 4V4z"/></svg>
+              <span>插件</span>
+            </div>
+            <div class="sec-body">
+              <p class="hint">面板采用注册式结构。后续可新增：参数读写、触发点、Rapid Trigger、RGB、OLED 状态等插件面板，加一项即出一栏。</p>
+            </div>
+          </div>
+        </div>
       </section>
     </aside>
 
-    <!-- Editor: live waveform + its toolbar. -->
-    <main class="editor">
+    <!-- Editor group -->
+    <main class="editor-group">
+      <div class="tabs-bar" id="tabs-bar">
+        <div class="tab active" data-tab="waveform">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 13h3l2-7 4 14 3-10 2 6h6"/></svg>
+          <span>waveform.scope</span>
+          <span class="tab-dot"></span>
+        </div>
+      </div>
+      <div class="breadcrumbs">
+        <span class="crumb">megknob-configurator</span>
+        <span class="sep">›</span>
+        <span class="crumb">telemetry</span>
+        <span class="sep">›</span>
+        <span class="crumb active">waveform.scope</span>
+      </div>
       <div class="editor-toolbar">
         <span class="editor-title">实时波形 · 24 通道</span>
         <label>时基
@@ -275,7 +660,28 @@
         <button id="btn-clear">清屏</button>
         <button id="btn-export">导出 CSV</button>
       </div>
-      <canvas id="wave-canvas"></canvas>
+      <div class="editor-canvas-wrap">
+        <canvas id="wave-canvas"></canvas>
+        <div class="canvas-overlay-legend">拖动侧栏边界可调整宽度 · 底部面板可查看标定结果</div>
+      </div>
+
+      <!-- Bottom panel: calibration result table / dev log, VSCode Panel-style -->
+      <div class="panel-area" id="panel-area">
+        <div class="panel-tabs">
+          <div class="panel-tab active" data-ptab="calib-result">标定结果</div>
+          <div class="panel-tab" data-ptab="log">日志</div>
+          <div class="spacer"></div>
+          <div class="panel-actions">
+            <button id="btn-panel-toggle" title="折叠面板">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 15l6-6 6 6"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="panel-view-inner active" data-ptab="calib-result" id="calib-result"></div>
+          <div class="panel-view-inner" data-ptab="log" id="dev-log"></div>
+        </div>
+      </div>
     </main>
   </div>
 
@@ -289,6 +695,7 @@
     <span class="sb-item">校验 <span class="value" id="m-crc">-</span></span>
     <span class="sb-item">协议 <span class="value" id="m-version">-</span></span>
     <span class="spacer"></span>
+    <span class="sb-item">UTF-8</span>
     <span class="sb-item">
       <select class="theme-select">
         <option value="vscode-dark">VSCode Dark</option>
