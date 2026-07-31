@@ -207,21 +207,19 @@
         <h2>逐键校准</h2>
         <div class="calib-status" id="calib-status"></div>
         <div class="calbars" id="calib-bars"></div>
+        <div class="calib-actions">
+          <button id="btn-calib-record">按键量程检测</button>
+        </div>
         <div class="calib-params">
-          <label>触发 <input id="calib-press-pct" type="number" value="40" min="1" max="99" />%</label>
-          <label>释放 <input id="calib-release-pct" type="number" value="20" min="1" max="99" />%</label>
+          <label>触发行程 <input id="calib-trigger" type="number" value="0.1" min="0" max="1" step="0.01" /></label>
+          <label>滞回区间 <input id="calib-hysteresis" type="number" value="0.1" min="0" max="1" step="0.01" /></label>
         </div>
         <div class="calib-actions">
-          <button id="btn-calib-baseline">① 采静止电压</button>
-          <button id="btn-calib-bottom">② 采满行程</button>
-          <button id="btn-calib-compute">③ 计算阈值</button>
+          <button id="btn-calib-send" class="primary" disabled>发送标定数值</button>
+          <button id="btn-calib-export">导出数据</button>
         </div>
         <label class="calib-hold"><input type="checkbox" id="calib-hold-all" /> 演示：按住全部</label>
         <div class="calib-result" id="calib-result"></div>
-        <div class="calib-actions">
-          <button id="btn-calib-export">导出校准 JSON</button>
-          <button id="btn-calib-apply" disabled title="需固件 Issue D 双向命令协议">下发到设备</button>
-        </div>
       </section>
 
       <section class="panel-view" data-panel="connect">

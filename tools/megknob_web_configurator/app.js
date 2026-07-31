@@ -152,16 +152,14 @@ const el = {
   exportBtn: document.getElementById('btn-export'),
   demo: document.getElementById('btn-demo'),
   calibStatus: document.getElementById('calib-status'),
-  calibPressPct: document.getElementById('calib-press-pct'),
-  calibReleasePct: document.getElementById('calib-release-pct'),
-  calibBaseline: document.getElementById('btn-calib-baseline'),
-  calibBottom: document.getElementById('btn-calib-bottom'),
-  calibCompute: document.getElementById('btn-calib-compute'),
+  calibTrigger: document.getElementById('calib-trigger'),
+  calibHysteresis: document.getElementById('calib-hysteresis'),
+  calibRecord: document.getElementById('btn-calib-record'),
+  calibSend: document.getElementById('btn-calib-send'),
   calibHoldAll: document.getElementById('calib-hold-all'),
   calibResult: document.getElementById('calib-result'),
   calibBars: document.getElementById('calib-bars'),
   calibExport: document.getElementById('btn-calib-export'),
-  calibApply: document.getElementById('btn-calib-apply'),
   statusDot: document.getElementById('status-dot'),
   statusText: document.getElementById('status-text'),
   timebase: document.getElementById('timebase'),
@@ -446,25 +444,29 @@ function exportCsv() {
   URL.revokeObjectURL(url);
 }
 
-// --- Per-key calibration wizard (web side) ---
-// Per the roadmap (短期目标: 逐键校准): sampling and threshold computation
-// happen entirely here in the web app; the firmware only receives the final
-// per-key press/release thresholds (see Issue D) and stores them in NVS. This
-// wizard therefore needs no special firmware "calibration mode" -- it reuses
-// the same live v3 waveform stream (real device or demo) for sampling.
+// --- 逐键校准（网页端） ---
+// 依据路线图（短期目标: 逐键校准）：采样与阈值计算全部在网页端完成，
+// 固件只接收最终的每键触发/释放阈值（见 Issue D）并存入 NVS，
+// 因此不需要固件实现专门的“校准模式”。
+//
+// 交互流程（2026-07-30 与用户确认）：
+//   1. 点“按键量程检测”开始记录，随后随机按下所有按键；
+//   2. 系统实时记录每键最大/最小电压（松开最高=静止，按到底最低=满行程，
+//      因为 press_is_greater=false，按下电压下降）；
+//   3. 点“量程标定完成”锁定每键量程 [min, max]；
+//   4. 设定“触发行程”（如 0.1 = 按下 10% 量程触发）与“滞回区间”（如 0.1 或 0.01）；
+//   5. 点“发送标定数值”把每键阈值经命令帧下发到固件（需固件 Issue D 协议）。
 const calibration = {
-  baseline: new Array(CHANNEL_COUNT).fill(null),
-  bottom: new Array(CHANNEL_COUNT).fill(null),
-  results: null,
+  min: new Array(CHANNEL_COUNT).fill(null), // 满行程电压（按到底最低）
+  max: new Array(CHANNEL_COUNT).fill(null), // 静止电压（松开最高）
+  results: null,                            // 每键 {min,max,range,press,release,quality,ok}
 };
 
-// Active sampling window, or null when idle. Filled by feedCalibSampling()
-// from handleDecodedFrames() so both the real device and the demo source feed it.
-let calibSampling = null;
+let calibRecording = false;
 
 // --- 校准竖条可视化 ---
-// 每通道一条竖直电平条：灰色轨道代表 0-3300mV，白色游标是实时电压，
-// 采静止电压后出基准线，采满行程后把动态范围填色，计算阈值后标出触发/释放线。
+// 每通道一条竖直电平条：灰色轨道代表 0-3300mV，游标是实时电压，
+// 静止基准线=max，量程填色=min~max，触发/释放阈值各一条线。
 const CAL_MAX_MV = 3300;
 let calbarEls = [];
 
@@ -499,37 +501,30 @@ function buildCalibBars() {
   }
 }
 
-// 每帧调用：只更新实时电压游标。
-function updateCalibCursors() {
-  for (let i = 0; i < CHANNEL_COUNT; i++) {
-    calbarEls[i].cursor.style.top = mvToTopPct(state.latest[i]) + '%';
-  }
-}
-
-// 校准数据变化时调用：更新静止电压线、动态范围填色、触发/释放阈值线。
-function updateCalibBars() {
+// 每帧调用：实时游标 + 静止基准线(max) + 量程填色(min~max) + 触发/释放线。
+function updateCalibVisual() {
   for (let i = 0; i < CHANNEL_COUNT; i++) {
     const e = calbarEls[i];
-    const b = calibration.baseline[i];
-    const bot = calibration.bottom[i];
-    const r = calibration.results && calibration.results[i] && calibration.results[i].ok
-      ? calibration.results[i] : null;
+    e.cursor.style.top = mvToTopPct(state.latest[i]) + '%';
 
-    e.baseline.style.display = b == null ? 'none' : 'block';
-    if (b != null) {
-      e.baseline.style.top = mvToTopPct(b) + '%';
+    const mx = calibration.max[i];
+    const mn = calibration.min[i];
+    e.baseline.style.display = mx == null ? 'none' : 'block';
+    if (mx != null) {
+      e.baseline.style.top = mvToTopPct(mx) + '%';
     }
 
-    if (b != null && bot != null) {
-      const top = Math.min(mvToTopPct(b), mvToTopPct(bot));
-      const height = Math.abs(mvToTopPct(bot) - mvToTopPct(b));
+    if (mn != null && mx != null) {
+      const top = mvToTopPct(mx);
       e.range.style.display = 'block';
       e.range.style.top = top + '%';
-      e.range.style.height = height + '%';
+      e.range.style.height = (mvToTopPct(mn) - top) + '%';
     } else {
       e.range.style.display = 'none';
     }
 
+    const r = calibration.results && calibration.results[i] && calibration.results[i].ok
+      ? calibration.results[i] : null;
     if (r) {
       e.press.style.display = 'block';
       e.press.style.top = mvToTopPct(r.press) + '%';
@@ -542,75 +537,66 @@ function updateCalibBars() {
   }
 }
 
-function startCalibSampling(which) {
+// “按键量程检测” ↔ “量程标定完成”切换。
+function toggleCalibRecording() {
   if (!demo.active && !state.connected) {
     alert('请先“连接设备”，或点“演示模式”用模拟数据体验校准流程。');
     return;
   }
-  calibSampling = {
-    which,
-    startMs: performance.now(),
-    durationMs: 2000,
-    acc: Array.from({ length: CHANNEL_COUNT }, () => ({ sum: 0, count: 0, min: Infinity, max: -Infinity })),
-  };
+  if (calibRecording) {
+    calibRecording = false; // 量程标定完成：锁定并计算阈值
+    computeCalibThresholds();
+  } else {
+    calibration.min.fill(null); // 开始检测：清空每键极值重新记录
+    calibration.max.fill(null);
+    calibration.results = null;
+    calibRecording = true;
+  }
   updateCalibUI();
 }
 
+// 记录中：对每键累积 min/max（在 handleDecodedFrames 里被调用，真实/演示数据均可）。
 function feedCalibSampling(samples, nowMs) {
-  if (!calibSampling) {
+  if (!calibRecording) {
     return;
   }
   for (let i = 0; i < CHANNEL_COUNT; i++) {
-    const a = calibSampling.acc[i];
-    a.sum += samples[i];
-    a.count++;
-    a.min = Math.min(a.min, samples[i]);
-    a.max = Math.max(a.max, samples[i]);
-  }
-  if (nowMs - calibSampling.startMs >= calibSampling.durationMs) {
-    finishCalibSampling();
+    const v = samples[i];
+    calibration.min[i] = calibration.min[i] == null ? v : Math.min(calibration.min[i], v);
+    calibration.max[i] = calibration.max[i] == null ? v : Math.max(calibration.max[i], v);
   }
 }
 
-function finishCalibSampling() {
-  const s = calibSampling;
-  calibSampling = null;
-  for (let i = 0; i < CHANNEL_COUNT; i++) {
-    const a = s.acc[i];
-    if (a.count === 0) {
-      continue;
-    }
-    if (s.which === 'baseline') {
-      calibration.baseline[i] = a.sum / a.count; // 松开：取平均
-    } else {
-      calibration.bottom[i] = a.min; // press_is_greater=false：按到底电压最低
-    }
-  }
-  calibration.results = null; // 重新采样后旧结果作废
-  updateCalibUI();
+function clamp01(x) {
+  return Math.max(0, Math.min(1, isNaN(x) ? 0 : x));
 }
 
+// 触发行程(比例) + 滞回区间(比例) → 每键触发/释放阈值。
+// 触发 = max - 触发行程*量程；释放 = 触发 + 滞回*量程（不超过 max）。
 function computeCalibThresholds() {
-  const pressPct = parseFloat(el.calibPressPct.value) / 100;
-  const releasePct = parseFloat(el.calibReleasePct.value) / 100;
+  const triggerRatio = clamp01(parseFloat(el.calibTrigger.value));
+  const hysteresis = clamp01(parseFloat(el.calibHysteresis.value));
   const results = [];
   for (let i = 0; i < CHANNEL_COUNT; i++) {
-    const b = calibration.baseline[i];
-    const bot = calibration.bottom[i];
-    if (b == null || bot == null) {
-      results.push({ i, ok: false, reason: '缺少采样' });
+    const mn = calibration.min[i];
+    const mx = calibration.max[i];
+    if (mn == null || mx == null) {
+      results.push({ i, ok: false, reason: '未检测到' });
       continue;
     }
-    const range = b - bot;
-    const press = b - range * pressPct;
-    const release = b - range * releasePct;
+    const range = mx - mn;
+    const press = mx - triggerRatio * range;
+    let release = press + hysteresis * range;
+    if (release > mx) {
+      release = mx;
+    }
     let quality = 'ok';
     if (range < 80) {
       quality = 'bad';
     } else if (range < 200) {
       quality = 'warn';
     }
-    results.push({ i, ok: true, baseline: b, bottom: bot, range, press, release, quality });
+    results.push({ i, ok: true, min: mn, max: mx, range, press, release, quality });
   }
   calibration.results = results;
   updateCalibUI();
@@ -618,17 +604,14 @@ function computeCalibThresholds() {
 
 function renderCalibResults() {
   if (!calibration.results) {
-    const hasBaseline = calibration.baseline.filter((v) => v != null).length;
-    const hasBottom = calibration.bottom.filter((v) => v != null).length;
-    const hint = (hasBaseline || hasBottom)
-      ? `已采静止电压 ${hasBaseline}/24，满行程 ${hasBottom}/24。`
-      : '尚未采样。';
+    const detected = calibration.max.filter((v) => v != null).length;
+    const hint = detected > 0 ? `已检测 ${detected}/24 键的量程。` : '尚未开始检测。';
     el.calibResult.innerHTML = `<div class="calib-empty">${hint}</div>`;
     return;
   }
 
   let html = '<table class="calib-table"><thead><tr>' +
-    '<th>通道</th><th>静止</th><th>行程</th><th>触发</th><th>释放</th>' +
+    '<th>通道</th><th>静止</th><th>量程</th><th>触发</th><th>释放</th>' +
     '</tr></thead><tbody>';
   for (const r of calibration.results) {
     if (!r.ok) {
@@ -636,7 +619,7 @@ function renderCalibResults() {
     } else {
       html += `<tr class="${r.quality}">` +
         `<td>${CHANNEL_NAMES[r.i]}</td>` +
-        `<td>${Math.round(r.baseline)}</td>` +
+        `<td>${Math.round(r.max)}</td>` +
         `<td>${Math.round(r.range)}</td>` +
         `<td>${Math.round(r.press)}</td>` +
         `<td>${Math.round(r.release)}</td></tr>`;
@@ -647,41 +630,37 @@ function renderCalibResults() {
 }
 
 function updateCalibUI() {
-  const hasBaseline = calibration.baseline.some((v) => v != null);
-  const hasBottom = calibration.bottom.some((v) => v != null);
+  const hasRange = calibration.max.some((v) => v != null);
   let text;
-  if (calibSampling) {
-    text = calibSampling.which === 'baseline'
-      ? '正在采样静止电压… 请保持所有按键松开（约 2 秒）。'
-      : '正在采样满行程… 请把所有按键按到底（演示可勾选“按住全部”，约 2 秒）。';
-  } else if (!hasBaseline) {
-    text = '第 ① 步：松开所有按键，点“采静止电压”。';
-  } else if (!hasBottom) {
-    text = '第 ② 步：把所有按键按到底，点“采满行程”。';
+  if (calibRecording) {
+    text = '正在检测量程… 请随机按下所有按键，覆盖每键从静止到按到底。';
+  } else if (!hasRange) {
+    text = '第 ① 步：点“按键量程检测”，然后随机按下所有按键。';
   } else if (!calibration.results) {
-    text = '第 ③ 步：点“计算阈值”生成每键触发/释放值。';
+    text = '第 ② 步：点“量程标定完成”。';
   } else {
-    text = '校准完成。可导出数据；“下发到设备”需固件命令协议。';
+    text = '第 ③ 步：确认触发行程/滞回区间，点“发送标定数值”。';
   }
   el.calibStatus.textContent = text;
+  el.calibRecord.textContent = calibRecording ? '量程标定完成' : (hasRange ? '重新检测量程' : '按键量程检测');
+  el.calibSend.disabled = !(calibration.results && calibration.results.some((r) => r.ok));
   renderCalibResults();
-  updateCalibBars();
 }
 
 function exportCalibJson() {
   if (!calibration.results) {
-    alert('请先完成采样并“计算阈值”。');
+    alert('请先完成量程检测。');
     return;
   }
   const data = {
-    version: 1,
-    pressPercent: parseFloat(el.calibPressPct.value),
-    releasePercent: parseFloat(el.calibReleasePct.value),
-    note: '每键绝对阈值（毫伏）；press_is_greater=false（按下电压下降）；baseline=静止电压 bottom=满行程 press=触发 release=释放',
+    version: 2,
+    triggerRatio: clamp01(parseFloat(el.calibTrigger.value)),
+    hysteresis: clamp01(parseFloat(el.calibHysteresis.value)),
+    note: '每键绝对阈值（毫伏）；press_is_greater=false（按下电压下降）；min=满行程 max=静止 press=触发 release=释放',
     channels: calibration.results.map((r) => (r.ok ? {
       name: CHANNEL_NAMES[r.i],
-      baseline: Math.round(r.baseline),
-      bottom: Math.round(r.bottom),
+      min: Math.round(r.min),
+      max: Math.round(r.max),
       range: Math.round(r.range),
       press: Math.round(r.press),
       release: Math.round(r.release),
@@ -694,6 +673,68 @@ function exportCalibJson() {
   a.download = `megknob_calibration_${Date.now()}.json`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// CRC-16/CCITT-FALSE（与 frame-worker.js 一致），用于命令帧校验。
+function crc16(bytes, len) {
+  let crc = 0xffff;
+  for (let i = 0; i < len; i++) {
+    crc ^= bytes[i] << 8;
+    for (let bit = 0; bit < 8; bit++) {
+      crc = (crc & 0x8000) !== 0 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+    }
+  }
+  return crc;
+}
+
+// 组装“设置每键阈值”命令帧（Issue D 主机→设备协议）：
+//   'M' 'K' | ver=3 | type=0x10(命令) | cmd=0x01(设置阈值) | len=96 |
+//   payload: 24 × (press:u16le, release:u16le) | crc16(对前 6+96 字节)
+function buildSetThresholdsFrame() {
+  const payloadLen = CHANNEL_COUNT * 4;
+  const total = 6 + payloadLen + 2;
+  const buf = new Uint8Array(total);
+  buf[0] = 0x4d; // 'M'
+  buf[1] = 0x4b; // 'K'
+  buf[2] = 3;
+  buf[3] = 0x10;
+  buf[4] = 0x01;
+  buf[5] = payloadLen;
+  for (let i = 0; i < CHANNEL_COUNT; i++) {
+    const r = calibration.results[i];
+    const press = r.ok ? Math.round(r.press) : 0;
+    const release = r.ok ? Math.round(r.release) : 0;
+    const o = 6 + i * 4;
+    buf[o] = press & 0xff;
+    buf[o + 1] = (press >> 8) & 0xff;
+    buf[o + 2] = release & 0xff;
+    buf[o + 3] = (release >> 8) & 0xff;
+  }
+  const crc = crc16(buf, total - 2);
+  buf[total - 2] = crc & 0xff;
+  buf[total - 1] = (crc >> 8) & 0xff;
+  return buf;
+}
+
+async function sendCalibration() {
+  if (!calibration.results || !calibration.results.some((r) => r.ok)) {
+    alert('请先完成量程检测。');
+    return;
+  }
+  const frame = buildSetThresholdsFrame();
+  if (!state.port) {
+    alert('未连接真实设备。当前为演示/预览：固件端命令解析（Issue D）实现后，' +
+          '这里会经串口把每键阈值下发到设备。可先点“导出数据”保存标定结果。');
+    return;
+  }
+  try {
+    const writer = state.port.writable.getWriter();
+    await writer.write(frame);
+    writer.releaseLock();
+    el.calibStatus.textContent = '已发送标定数值（需固件命令协议支持后生效）。';
+  } catch (err) {
+    alert('发送失败: ' + err.message);
+  }
 }
 
 // --- Demo mode (no hardware attached) ---
@@ -830,12 +871,15 @@ el.disconnect.addEventListener('click', disconnect);
 el.clear.addEventListener('click', clearAll);
 el.exportBtn.addEventListener('click', exportCsv);
 el.demo.addEventListener('click', toggleDemo);
-el.calibBaseline.addEventListener('click', () => startCalibSampling('baseline'));
-el.calibBottom.addEventListener('click', () => startCalibSampling('bottom'));
-el.calibCompute.addEventListener('click', computeCalibThresholds);
+el.calibRecord.addEventListener('click', toggleCalibRecording);
+el.calibSend.addEventListener('click', sendCalibration);
 el.calibExport.addEventListener('click', exportCalibJson);
-el.calibApply.addEventListener('click', () =>
-  alert('“下发到设备”需要固件 Issue D 双向命令协议，当前仅支持预览与导出校准 JSON。'));
+el.calibTrigger.addEventListener('change', () => {
+  if (calibration.max.some((v) => v != null)) { computeCalibThresholds(); }
+});
+el.calibHysteresis.addEventListener('change', () => {
+  if (calibration.max.some((v) => v != null)) { computeCalibThresholds(); }
+});
 el.calibHoldAll.addEventListener('change', () => { demo.holdAll = el.calibHoldAll.checked; });
 window.addEventListener('resize', resizeCanvas);
 
@@ -850,7 +894,7 @@ updateCalibUI();
 function animate() {
   drawWaveform();
   updateChannelPanel();
-  updateCalibCursors();
+  updateCalibVisual();
   requestAnimationFrame(animate);
 }
 requestAnimationFrame(animate);
