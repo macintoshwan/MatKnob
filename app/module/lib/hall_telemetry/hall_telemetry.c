@@ -104,21 +104,57 @@ static uint16_t hall_telemetry_seq;
 static uint32_t hall_telemetry_scan_count;
 
 /* --- Per-key thresholds (Issue D) -----------------------------------------
- * Overrides the DT-global press/release thresholds in kscan_adc_mux once the
- * web configurator downloads a per-key calibration. Until then
- * hall_thresholds_valid is false and kscan falls back to the DT defaults. */
+ *
+ * A calibration is valid per channel, not all-or-nothing. This is important
+ * for MegKnob because some of the 24 ADC slots are not populated as physical
+ * keys and because a user may not reach the bottom of every key during one
+ * range-detection pass. An inactive channel always falls back to the safe DT
+ * defaults in kscan_adc_mux.
+ *
+ * Version 2 intentionally changes the persisted size/layout from the first
+ * all-or-nothing implementation. Existing NVS values are therefore rejected
+ * at boot rather than restoring potentially unsafe shallow (for example 0.1
+ * travel) thresholds that caused ghost presses. */
+#define HALL_THRESHOLDS_VERSION 2U
+#define HALL_CAL_MIN_MV 1
+#define HALL_CAL_MAX_MV 3300
+#define HALL_CAL_MIN_HYSTERESIS_MV 50
+
 struct hall_thresholds {
+    uint32_t version;
+    uint32_t active_channels;
     int32_t press[HALL_TELEMETRY_CHANNELS];
     int32_t release[HALL_TELEMETRY_CHANNELS];
 };
 
 static struct hall_thresholds hall_thresholds;
-static bool hall_thresholds_valid;
+
+static bool hall_threshold_is_valid(int32_t press_mv, int32_t release_mv) {
+    /* MegKnob uses press_is_greater=false, so a press lowers the voltage and
+     * release must be above press by a meaningful absolute hysteresis. */
+    return press_mv >= HALL_CAL_MIN_MV && press_mv < release_mv && release_mv <= HALL_CAL_MAX_MV &&
+           release_mv - press_mv >= HALL_CAL_MIN_HYSTERESIS_MV;
+}
+
+static bool hall_thresholds_has_active_channels(const struct hall_thresholds *thresholds) {
+    return thresholds->version == HALL_THRESHOLDS_VERSION && thresholds->active_channels != 0U;
+}
 
 bool hall_telemetry_get_thresholds(uint8_t channel, int32_t *press_mv, int32_t *release_mv) {
-    if (!hall_thresholds_valid || channel >= HALL_TELEMETRY_CHANNELS) {
+    uint32_t channel_bit;
+
+    if (channel >= HALL_TELEMETRY_CHANNELS ||
+        !hall_thresholds_has_active_channels(&hall_thresholds)) {
         return false;
     }
+
+    channel_bit = BIT(channel);
+    if ((hall_thresholds.active_channels & channel_bit) == 0U ||
+        !hall_threshold_is_valid(hall_thresholds.press[channel],
+                                 hall_thresholds.release[channel])) {
+        return false;
+    }
+
     *press_mv = hall_thresholds.press[channel];
     *release_mv = hall_thresholds.release[channel];
     return true;
@@ -161,7 +197,19 @@ static int hall_settings_set(const char *name, size_t len, settings_read_cb read
     if (rc < 0) {
         return (int)rc;
     }
-    hall_thresholds_valid = (rc == (ssize_t)len);
+    if (rc != (ssize_t)len || !hall_thresholds_has_active_channels(&hall_thresholds)) {
+        memset(&hall_thresholds, 0, sizeof(hall_thresholds));
+        return -EINVAL;
+    }
+
+    for (uint8_t i = 0; i < HALL_TELEMETRY_CHANNELS; i++) {
+        if ((hall_thresholds.active_channels & BIT(i)) != 0U &&
+            !hall_threshold_is_valid(hall_thresholds.press[i], hall_thresholds.release[i])) {
+            memset(&hall_thresholds, 0, sizeof(hall_thresholds));
+            return -EINVAL;
+        }
+    }
+
     return 0;
 }
 
@@ -195,21 +243,54 @@ static void hall_cmd_handle(uint8_t cmd, const uint8_t *payload, uint8_t len) {
     uint8_t status = HALL_ACK_OK;
 
     switch (cmd) {
-    case HALL_CMD_SET_THRESHOLDS:
+    case HALL_CMD_SET_THRESHOLDS: {
+        struct hall_thresholds candidate = {
+            .version = HALL_THRESHOLDS_VERSION,
+        };
+
         if (len != HALL_TELEMETRY_CHANNELS * 4) {
             status = HALL_ACK_ERR_BAD_LEN;
             break;
         }
+
         for (uint8_t i = 0; i < HALL_TELEMETRY_CHANNELS; i++) {
-            hall_thresholds.press[i] = (int32_t)sys_get_le16(&payload[i * 4]);
-            hall_thresholds.release[i] = (int32_t)sys_get_le16(&payload[i * 4 + 2]);
+            int32_t press_mv = (int32_t)sys_get_le16(&payload[i * 4]);
+            int32_t release_mv = (int32_t)sys_get_le16(&payload[i * 4 + 2]);
+
+            /* 0/0 explicitly means "do not calibrate this channel". It is
+             * used by the web configurator for missing or insufficient-range
+             * channels, which must retain their DT fallback instead of being
+             * turned into ghost keys. Any other partial/invalid pair rejects
+             * the complete command atomically. */
+            if (press_mv == 0 && release_mv == 0) {
+                continue;
+            }
+            if (!hall_threshold_is_valid(press_mv, release_mv)) {
+                status = HALL_ACK_ERR_BAD_LEN;
+                break;
+            }
+
+            candidate.press[i] = press_mv;
+            candidate.release[i] = release_mv;
+            candidate.active_channels |= BIT(i);
         }
-        hall_thresholds_valid = true;
-        LOG_INF("applied per-key thresholds for %u channels", HALL_TELEMETRY_CHANNELS);
+
+        if (status != HALL_ACK_OK) {
+            break;
+        }
+        if (!hall_thresholds_has_active_channels(&candidate)) {
+            status = HALL_ACK_ERR_NO_DATA;
+            break;
+        }
+
+        hall_thresholds = candidate;
+        LOG_INF("applied per-key thresholds for %u active channels",
+                (unsigned int)__builtin_popcount(candidate.active_channels));
         break;
+    }
 
     case HALL_CMD_SAVE_NVS:
-        if (!hall_thresholds_valid) {
+        if (!hall_thresholds_has_active_channels(&hall_thresholds)) {
             status = HALL_ACK_ERR_NO_DATA;
             break;
         }
@@ -217,7 +298,7 @@ static void hall_cmd_handle(uint8_t cmd, const uint8_t *payload, uint8_t len) {
         break;
 
     case HALL_CMD_RESET_DEFAULTS:
-        hall_thresholds_valid = false;
+        memset(&hall_thresholds, 0, sizeof(hall_thresholds));
         hall_thresholds_delete_nvs();
         LOG_INF("reset thresholds to DT defaults");
         break;

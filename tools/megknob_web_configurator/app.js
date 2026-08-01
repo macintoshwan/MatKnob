@@ -627,6 +627,16 @@ let calibRecording = false;
 // 每通道一条竖直电平条：灰色轨道代表 0-3300mV，游标是实时电压，
 // 静止基准线=max，量程填色=min~max，触发/释放阈值各一条线。
 const CAL_MAX_MV = 3300;
+
+// Hall 键的静止电压会随磁铁、温度和 ADC 噪声轻微漂移。曾经只用
+// `ratio=0.1` 直接乘量程：对未按到底、量程只有几十/几百 mV 的通道，
+// 触发点会贴在静止位附近，保存至 NVS 后便会产生鬼键。以下绝对余量
+// 保证即使用户选择很浅的比例，也不会把一个噪声范围当作有效按键。
+const CAL_MIN_RANGE_MV = 400;
+const CAL_WARN_RANGE_MV = 600;
+const CAL_MIN_PRESS_TRAVEL_MV = 180;
+const CAL_MIN_HYSTERESIS_MV = 80;
+const CAL_BASELINE_GUARD_MV = 60;
 let calbarEls = [];
 
 function mvToTopPct(mv) {
@@ -735,30 +745,55 @@ function clamp01(x) {
 }
 
 // 触发行程(比例) + 滞回区间(比例) → 每键触发/释放阈值。
-// 触发 = max - 触发行程*量程；释放 = 触发 + 滞回*量程（不超过 max）。
+//
+// 按下电压下降：press = max - travel，release = press + hysteresis。
+// 除了用户设定的比例，还强制保留绝对触发行程、绝对滞回和静止位保护
+// 区间；不能满足最小量程的通道不下发，固件会对它回退 DTS 默认阈值。
 function computeCalibThresholds() {
   const triggerRatio = clamp01(parseFloat(el.calibTrigger.value));
-  const hysteresis = clamp01(parseFloat(el.calibHysteresis.value));
+  const hysteresisRatio = clamp01(parseFloat(el.calibHysteresis.value));
   const results = [];
   for (let i = 0; i < CHANNEL_COUNT; i++) {
     const mn = calibration.min[i];
     const mx = calibration.max[i];
     if (mn == null || mx == null) {
-      results.push({ i, ok: false, reason: "未检测到" });
+      results.push({ i, ok: false, quality: "bad", reason: "未检测到" });
       continue;
     }
+
     const range = mx - mn;
-    const press = mx - triggerRatio * range;
-    let release = press + hysteresis * range;
-    if (release > mx) {
-      release = mx;
+    if (range < CAL_MIN_RANGE_MV) {
+      results.push({
+        i,
+        ok: false,
+        min: mn,
+        max: mx,
+        range,
+        quality: "bad",
+        reason: `量程不足 ${CAL_MIN_RANGE_MV} mV`,
+      });
+      continue;
     }
-    let quality = "ok";
-    if (range < 80) {
-      quality = "bad";
-    } else if (range < 200) {
-      quality = "warn";
+
+    const pressTravel = Math.max(triggerRatio * range, CAL_MIN_PRESS_TRAVEL_MV);
+    const press = mx - pressTravel;
+    const releaseGap = Math.max(hysteresisRatio * range, CAL_MIN_HYSTERESIS_MV);
+    // 释放点不能贴到记录期间的最高静止电压；否则自然漂移会反复触发。
+    const release = Math.min(press + releaseGap, mx - CAL_BASELINE_GUARD_MV);
+
+    if (release <= press) {
+      results.push({
+        i,
+        ok: false,
+        min: mn,
+        max: mx,
+        range,
+        quality: "bad",
+        reason: "滞回余量不足",
+      });
+      continue;
     }
+
     results.push({
       i,
       ok: true,
@@ -767,7 +802,7 @@ function computeCalibThresholds() {
       range,
       press,
       release,
-      quality,
+      quality: range < CAL_WARN_RANGE_MV ? "warn" : "ok",
     });
   }
   calibration.results = results;
@@ -831,7 +866,12 @@ function updateCalibUI() {
     text = "第 ② 步：点“量程标定完成”。";
     step = 2;
   } else {
-    text = "第 ③ 步：确认触发行程/滞回区间，点“发送标定数值”。";
+    const safeCount = calibration.results.filter((r) => r.ok).length;
+    const ignoredCount = CHANNEL_COUNT - safeCount;
+    text =
+      ignoredCount > 0
+        ? `第 ③ 步：得到 ${safeCount} 路安全阈值；${ignoredCount} 路量程不足，将保留固件默认值。`
+        : "第 ③ 步：确认触发行程/滞回区间，点“发送标定数值”。";
     step = 3;
   }
   el.calibStatus.textContent = text;
@@ -929,6 +969,8 @@ function buildSetThresholdsFrame() {
   const payload = new Uint8Array(CHANNEL_COUNT * 4);
   for (let i = 0; i < CHANNEL_COUNT; i++) {
     const r = calibration.results[i];
+    // 0/0 是协议中的“此通道不应用校准”哨兵值；固件会继续使用
+    // devicetree 默认阈值，而不是把不完整采样写成危险的近静止阈值。
     const press = r.ok ? Math.round(r.press) : 0;
     const release = r.ok ? Math.round(r.release) : 0;
     const o = i * 4;

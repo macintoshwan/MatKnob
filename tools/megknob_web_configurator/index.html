@@ -1378,7 +1378,7 @@
                     <input
                       id="calib-trigger"
                       type="number"
-                      value="0.1"
+                      value="0.35"
                       min="0"
                       max="1"
                       step="0.01"
@@ -1388,7 +1388,7 @@
                     <input
                       id="calib-hysteresis"
                       type="number"
-                      value="0.1"
+                      value="0.15"
                       min="0"
                       max="1"
                       step="0.01"
@@ -1422,7 +1422,9 @@
                 <div class="calbars" id="calib-bars"></div>
                 <div class="hint">
                   灰色轨道
-                  0–3.3V；蓝色为已标定量程；白线=静止基准，黄线=触发点，绿线=释放点。
+                  0–3.3V；蓝色为已标定量程；白线=静止基准，黄线=触发点，绿线=释放点。量程低于
+                  400mV 的通道不会下发，避免鬼键；即使设为
+                  0.1，系统也会保留安全的最小触发/滞回余量。
                 </div>
               </div>
             </div>
