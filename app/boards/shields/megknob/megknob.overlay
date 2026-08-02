@@ -10,6 +10,7 @@
 
 / {
     chosen {
+        zephyr,display = &oled;
         zmk,kscan = &kscan0;
         zmk,physical-layout = &megknob_layout;
         zmk,underglow = &led_strip;
@@ -195,6 +196,28 @@
         zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
         zephyr,input-positive = <NRF_SAADC_AIN7>;
         zephyr,resolution = <12>;
+    };
+};
+
+/* 0.91-inch 128x32 SSD1306 OLED. The module shares the nice!nano
+ * pro-micro I2C bus: P0.17=SDA and P0.20=SCL. Typical four-wire modules do
+ * not expose reset, so no reset GPIO is required. If an assembled board uses
+ * 0x3D instead, only `reg` below needs to be changed. */
+&pro_micro_i2c {
+    status = "okay";
+
+    oled: ssd1306@3c {
+        compatible = "solomon,ssd1306fb";
+        reg = <0x3c>;
+        width = <128>;
+        height = <32>;
+        segment-offset = <0>;
+        page-offset = <0>;
+        display-offset = <0>;
+        multiplex-ratio = <31>;
+        com-sequential;
+        inversion-on;
+        prechargep = <0x22>;
     };
 };
 
