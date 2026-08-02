@@ -245,7 +245,7 @@ jobs:
               );
 
             const boardAndShield = (b, s) => {
-              if (s.id === "megknob" && b.id !== "nice_nano") {
+              if (s.id === "megknob" && !b.id.startsWith("nice_nano")) {
                 return [];
               }
 

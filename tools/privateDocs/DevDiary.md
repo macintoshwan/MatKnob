@@ -791,3 +791,27 @@ v3 时间处理：
 地址 A/B/C 单点虚焊通常造成选错或随机选通，不太容易在所有 Y 输入相近时稳定产生"Z 始终为 0 V"。
 
 </details>
+
+---
+
+## 2026-08-03：MegKnob OLED 初始化故障修复与状态页验证
+
+### 故障现象与根因
+
+启用 OLED 后，设备曾出现全屏黄色、Windows 将 USB HID 识别为不受支持设备、BLE 断连且按键无响应的连锁故障。根因是屏幕设备树节点虽然存在，但配置未启用 I2C 和 SSD1306 驱动；显示子系统处于未完成初始化的状态，并在系统共享工作队列中阻塞，进而饿死 USB、BLE 和键盘扫描任务。
+
+### 已完成的修复
+
+- 在 `megknob.conf` 显式启用 `CONFIG_I2C`、`CONFIG_SSD1306` 与 128×32 单色 OLED 所需的 LVGL 1-bit 配置（`LV_Z_BITS_PER_PIXEL=1`、`LV_Z_VDB_SIZE=64`）；
+- 在 `Kconfig.defconfig` 中为 `ZMK_DISPLAY` 提供相同的 I2C、SSD1306 和 LVGL 默认值，避免构建配置遗漏；
+- 启用 `CONFIG_ZMK_DISPLAY_WORK_QUEUE_DEDICATED`，将显示刷新移到独立工作队列。即使 I2C 传输缓慢或异常，也不会再阻塞 USB HID、BLE 和 kscan；
+- 修正 GitHub Actions 对 `nice_nano//zmk` 的矩阵过滤条件，确保 MegKnob 固件会进入 CI 编译；
+- CI 运行 `30756387942` 已成功生成 `nice_nano__zmk-megknob-zmk.zip`，RAM 使用约 25.35%（66 KB），有充足余量。
+
+### 实机结果
+
+刷入最新构建产物后，USB、BLE、按键和 OLED 均已恢复正常，确认上述修复有效。
+
+### 后续显示方向
+
+128×32 OLED 的默认状态页将继续保持高信息密度：顶部展示 USB/BLE 输出状态与当前 BLE profile、电池/充电状态；底部展示活动层与 WPM。为让电量信息可用，MegKnob 后续固件开启电池采样并显示百分比；这不会影响 Hall 遥测，显示更新仍在独立工作队列内执行。Caps Lock、校准进度、Hall 异常等诊断型信息适合在后续作为短时提示页加入，而不是常驻挤占主状态页。
