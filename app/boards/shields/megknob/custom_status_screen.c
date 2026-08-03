@@ -6,6 +6,7 @@
 
 #include <stdio.h>
 
+#include <lvgl.h>
 #include <zephyr/kernel.h>
 
 #include <zmk/battery.h>
